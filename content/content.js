@@ -241,11 +241,20 @@ async function explainPage() {
     });
 
     if (response.success) {
-      updateMessage(loadingMessage, response.response);
+      let text = response.response;
+      // 当背景返回提示时（例如重试后移除图片），它会添加一个警告前缀
+      const warningPrefix = '⚠️ 注意：';
+      if (typeof text === 'string' && text.startsWith(warningPrefix)) {
+        const [warningLine, ...rest] = text.split('\n');
+        addMessage(warningLine, 'system');
+        text = rest.join('\n').trim();
+      }
+
+      updateMessage(loadingMessage, text);
       
       // 语音播报
       if (voiceService.synthesis) {
-        await voiceService.speak(response.response, { rate: 1.0 });
+        await voiceService.speak(text, { rate: 1.0 });
       }
     } else {
       updateMessage(loadingMessage, '分析失败: ' + response.error);
@@ -278,14 +287,22 @@ async function askQuestion(question) {
     });
 
     if (response.success) {
-      updateMessage(loadingMessage, response.response);
+      let text = response.response;
+      const warningPrefix = '⚠️ 注意：';
+      if (typeof text === 'string' && text.startsWith(warningPrefix)) {
+        const [warningLine, ...rest] = text.split('\n');
+        addMessage(warningLine, 'system');
+        text = rest.join('\n').trim();
+      }
+
+      updateMessage(loadingMessage, text);
       
       // 检查是否有标注指令
-      await handleAnnotations(response.response);
+      await handleAnnotations(text);
       
       // 语音播报
       if (voiceService.synthesis) {
-        await voiceService.speak(response.response, { rate: 1.0 });
+        await voiceService.speak(text, { rate: 1.0 });
       }
     } else {
       updateMessage(loadingMessage, '回答失败: ' + response.error);

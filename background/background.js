@@ -34,7 +34,7 @@ const DEFAULT_CONFIGS = {
   },
   [MODEL_TYPES.DOUBAO]: {
     baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
-    model: 'doubao-1.5-thinking-vision-pro',
+    model: '', // 需要填写火山引擎的推理接入点 ID，格式如 ep-20241211xxxxx
     maxTokens: 4096
   },
   [MODEL_TYPES.GEMINI]: {
@@ -96,6 +96,44 @@ class LLMProvider {
 
     const { stream = false, onChunk = null } = options;
 
+    // Helper: check multi-modal (image) content
+    const _hasImageInMessages = (msgs) => {
+      return msgs.some(msg => {
+        if (!msg || !msg.content) return false;
+        if (typeof msg.content !== 'string') {
+          if (Array.isArray(msg.content)) {
+            return msg.content.some(item => item && item.type === 'image_url');
+          }
+          if (msg.content.image_url) return true;
+        }
+        return false;
+      });
+    };
+
+    // Helper: remove image items from messages, join text parts
+    const _stripImagesFromMessages = (msgs) => {
+      return msgs.map(msg => {
+        if (!msg || !msg.content) return msg;
+        if (typeof msg.content === 'string') return msg;
+
+        if (Array.isArray(msg.content)) {
+          // keep text parts, remove images
+          const textParts = msg.content.filter(item => item.type === 'text').map(item => item.text);
+          const combined = textParts.join('\n');
+          return { role: msg.role, content: combined };
+        }
+
+        if (msg.content.image_url) {
+          // replace with a note
+          return {
+            role: msg.role,
+            content: `（截图已省略） ${msg.content.text || ''}`
+          };
+        }
+        return msg;
+      });
+    };
+
     // Claude 需要特殊处理
     if (this.modelType === MODEL_TYPES.CLAUDE) {
       return this._chatClaude(messages, options);
@@ -126,6 +164,34 @@ class LLMProvider {
       if (!response.ok) {
         const errorText = await response.text();
         console.error('[LLMProvider] API 错误:', errorText);
+
+        // 如果是 400 并提示不支持 multi-modal，我们重试一次去掉图片
+        if (response.status === 400 && /multi-?modal|multi modal|received multi-modal/i.test(errorText)) {
+          console.warn('[LLMProvider] 检测到模型不支持多模态输入，尝试去除图片并重试');
+          const strippedMsgs = _stripImagesFromMessages(messages);
+          const strippedBody = { ...requestBody, messages: strippedMsgs };
+
+          const retryResponse = await fetch(`${this.config.baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${this.config.apiKey}`
+            },
+            body: JSON.stringify(strippedBody)
+          });
+
+          if (!retryResponse.ok) {
+            const retryError = await retryResponse.text();
+            console.error('[LLMProvider] 重试（无图片）失败:', retryError);
+            throw new Error(`API 请求失败 (${retryResponse.status}): ${retryError}`);
+          }
+
+          const retryData = await retryResponse.json();
+          const content = retryData.choices[0].message.content;
+          // 添加提示，告知用户我们已移除图片
+          return `⚠️ 注意：当前模型不支持图片输入，已自动省略截图后返回结果。\n\n${content}`;
+        }
+
         throw new Error(`API 请求失败 (${response.status}): ${errorText}`);
       }
 

@@ -23,7 +23,7 @@ const MODEL_CONFIGS = {
   doubao: {
     name: '火山引擎 (豆包)',
     baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
-    model: 'doubao-1.5-thinking-vision-pro'
+    model: '' // 需要填写推理接入点 ID (ep-xxx)
   },
   gemini: {
     name: 'Google (Gemini)',
@@ -135,13 +135,36 @@ function switchTab(tabId) {
 function handleModelTypeChange() {
   const modelType = elements.modelType.value;
   const isCustom = modelType === 'custom';
+  const isDoubao = modelType === 'doubao';
+  
+  // 豆包和自定义都需要显示模型名称输入框
+  const showModelInput = isCustom || isDoubao;
   
   elements.baseUrlGroup.style.display = isCustom ? 'block' : 'none';
-  elements.modelNameGroup.style.display = isCustom ? 'block' : 'none';
+  elements.modelNameGroup.style.display = showModelInput ? 'block' : 'none';
   
-  if (!isCustom && MODEL_CONFIGS[modelType]) {
+  // 显示提示信息
+  const hintEl = document.getElementById('model-hint');
+  if (hintEl) {
+    if (isDoubao) {
+      hintEl.textContent = '💡 请填写火山引擎的推理接入点 ID，格式如: ep-20241211xxxxx';
+      hintEl.style.display = 'block';
+      elements.modelName.placeholder = '推理接入点 ID (ep-xxx)';
+    } else if (isCustom) {
+      hintEl.textContent = '';
+      hintEl.style.display = 'none';
+      elements.modelName.placeholder = '例如: gpt-4o';
+    } else {
+      hintEl.style.display = 'none';
+    }
+  }
+  
+  if (!isCustom && !isDoubao && MODEL_CONFIGS[modelType]) {
     elements.baseUrl.value = MODEL_CONFIGS[modelType].baseUrl;
     elements.modelName.value = MODEL_CONFIGS[modelType].model;
+  } else if (isDoubao) {
+    elements.baseUrl.value = MODEL_CONFIGS[modelType].baseUrl;
+    elements.modelName.value = ''; // 需要用户填写
   }
 }
 
