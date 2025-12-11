@@ -430,6 +430,16 @@ async function handleMessage(message, sender) {
         config: llmProvider.getConfig()
       };
     
+    case 'RESET_AGENT':
+      console.log('[Background] 重置 Agent/会话');
+      try {
+        await llmProvider.init();
+        return { success: true };
+      } catch (error) {
+        console.error('[Background] 重置失败:', error);
+        return { success: false, error: error.message };
+      }
+    
     case 'SET_LLM_CONFIG':
       console.log('[Background] 设置配置:', data.modelType);
       try {

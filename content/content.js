@@ -9,6 +9,10 @@ let autoScrollService = null;
 let voiceService = null;
 let panelUI = null;
 let isInitialized = false;
+// 输入历史（最近10条）
+let inputHistory = [];
+let historyIndex = -1; // -1 表示未浏览
+let tempInput = '';
 
 // 初始化
 function init() {
@@ -61,6 +65,7 @@ function createPanel() {
         <button class="pe-btn pe-btn-primary" id="pe-explain-btn">📖 讲解页面</button>
         <button class="pe-btn" id="pe-scroll-btn">📜 自动翻页</button>
         <button class="pe-btn" id="pe-voice-btn">🎤 语音输入</button>
+        <button class="pe-btn" id="pe-new-conv-btn" title="新建对话">🆕 新建对话</button>
       </div>
       <div class="pe-input-container">
         <input type="text" class="pe-input" id="pe-input" placeholder="输入你的问题..." />
@@ -103,6 +108,14 @@ function bindPanelEvents() {
     const text = input.value.trim();
     if (!text) return;
 
+    // 保存到历史（最新在前），避免重复连续相同
+    if (!inputHistory.length || inputHistory[0] !== text) {
+      inputHistory.unshift(text);
+      if (inputHistory.length > 10) inputHistory.pop();
+    }
+    historyIndex = -1;
+    tempInput = '';
+
     input.value = '';
     addMessage(text, 'user');
     
@@ -112,6 +125,28 @@ function bindPanelEvents() {
   sendBtn.addEventListener('click', sendMessage);
   input.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') sendMessage();
+  });
+  input.addEventListener('keydown', (e) => {
+    // 只有当没有组合按键（如 Ctrl/Cmd）时才处理
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+
+    if (e.key === 'ArrowUp') {
+      if (inputHistory.length === 0) return;
+      if (historyIndex === -1) tempInput = input.value;
+      historyIndex = Math.min(inputHistory.length - 1, historyIndex + 1);
+      input.value = inputHistory[historyIndex] || '';
+      e.preventDefault();
+    } else if (e.key === 'ArrowDown') {
+      if (inputHistory.length === 0) return;
+      if (historyIndex === -1) return;
+      historyIndex = historyIndex - 1;
+      if (historyIndex === -1) {
+        input.value = tempInput;
+      } else {
+        input.value = inputHistory[historyIndex] || '';
+      }
+      e.preventDefault();
+    }
   });
 
   // 讲解页面
@@ -146,6 +181,14 @@ function bindPanelEvents() {
       scrollBtn.textContent = '⏹️ 停止滚动';
       isAutoScrolling = true;
     }
+  });
+
+  // 新建对话
+  const newConvBtn = document.getElementById('pe-new-conv-btn');
+  newConvBtn.addEventListener('click', async () => {
+    const confirmed = confirm('确定要新建对话吗？这将清空当前聊天记录并重置会话。');
+    if (!confirmed) return;
+    newConversation();
   });
 
   // 语音输入
@@ -448,6 +491,29 @@ function handleAnnotationEvent(event) {
   annotations.forEach(desc => {
     handleAnnotations(`[标注:${desc}]`);
   });
+}
+
+// 新建对话：清空UI聊天记录并重置历史
+async function newConversation() {
+  // 清空消息区，但保留系统欢迎语
+  const messagesContainer = document.getElementById('pe-messages');
+  messagesContainer.innerHTML = '';
+  const intro = document.createElement('div');
+  intro.className = 'pe-message pe-message-assistant';
+  intro.innerHTML = `<div class="pe-message-content">你好！我是 WebLM。我可以帮你理解当前页面的内容，回答你的问题，还能用语音和你交流。点击下方按钮开始吧！</div>`;
+  messagesContainer.appendChild(intro);
+
+  // 重置本地历史
+  inputHistory = [];
+  historyIndex = -1;
+  tempInput = '';
+
+  // 通知 background 清理会话/缓存
+  try {
+    await chrome.runtime.sendMessage({ type: 'RESET_AGENT' });
+  } catch (e) {
+    console.warn('通知 background 重置会话失败:', e);
+  }
 }
 
 // 处理来自 background 的消息
