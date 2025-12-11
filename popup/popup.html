@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebLM</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <!-- 头部 -->
+    <header class="popup-header">
+      <h1>🤖 WebLM</h1>
+      <p class="subtitle">AI驱动的网页内容讲解工具</p>
+    </header>
+
+    <!-- 标签导航 -->
+    <nav class="tab-nav">
+      <button class="tab-btn active" data-tab="main">主页</button>
+      <button class="tab-btn" data-tab="settings">设置</button>
+      <button class="tab-btn" data-tab="about">关于</button>
+    </nav>
+
+    <!-- 主页内容 -->
+    <div class="tab-content active" id="tab-main">
+      <div class="action-section">
+        <h3>快速操作</h3>
+        <div class="action-buttons">
+          <button class="action-btn primary" id="btn-explain">
+            <span class="icon">📖</span>
+            <span class="text">讲解当前页面</span>
+          </button>
+          <button class="action-btn" id="btn-voice">
+            <span class="icon">🎤</span>
+            <span class="text">语音对话</span>
+          </button>
+          <button class="action-btn" id="btn-auto-scroll">
+            <span class="icon">📜</span>
+            <span class="text">自动翻页</span>
+          </button>
+          <button class="action-btn" id="btn-annotate">
+            <span class="icon">✏️</span>
+            <span class="text">画线标注</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="status-section">
+        <h3>当前状态</h3>
+        <div class="status-item">
+          <span class="status-label">模型:</span>
+          <span class="status-value" id="current-model">未配置</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">语音:</span>
+          <span class="status-value" id="voice-status">可用</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 设置内容 -->
+    <div class="tab-content" id="tab-settings">
+      <div class="settings-section">
+        <h3>模型配置</h3>
+        
+        <div class="form-group">
+          <label for="model-type">选择模型</label>
+          <select id="model-type" class="form-select">
+            <option value="openai">OpenAI (GPT-4o)</option>
+            <option value="claude">Anthropic (Claude)</option>
+            <option value="qwen">阿里云 (千问VL)</option>
+            <option value="doubao">火山引擎 (豆包)</option>
+            <option value="gemini">Google (Gemini)</option>
+            <option value="custom">自定义</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="api-key">API Key</label>
+          <input type="password" id="api-key" class="form-input" placeholder="输入你的 API Key">
+          <button class="toggle-password" id="toggle-api-key">👁️</button>
+        </div>
+
+        <div class="form-group" id="base-url-group" style="display: none;">
+          <label for="base-url">API Base URL</label>
+          <input type="text" id="base-url" class="form-input" placeholder="https://api.example.com/v1">
+        </div>
+
+        <div class="form-group" id="model-name-group" style="display: none;">
+          <label for="model-name">模型名称</label>
+          <input type="text" id="model-name" class="form-input" placeholder="例如: gpt-4o">
+        </div>
+
+        <button class="save-btn" id="save-settings">保存配置</button>
+        <div class="save-status" id="save-status"></div>
+      </div>
+
+      <div class="settings-section">
+        <h3>语音设置</h3>
+        
+        <div class="form-group">
+          <label for="voice-select">语音选择</label>
+          <select id="voice-select" class="form-select">
+            <option value="">默认语音</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="voice-rate">语速: <span id="rate-value">1.0</span></label>
+          <input type="range" id="voice-rate" class="form-range" min="0.5" max="2" step="0.1" value="1">
+        </div>
+
+        <div class="form-group">
+          <label>
+            <input type="checkbox" id="auto-speak" checked>
+            自动播报AI回复
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- 关于内容 -->
+    <div class="tab-content" id="tab-about">
+      <div class="about-section">
+        <div class="about-logo">🤖</div>
+        <h2>WebLM</h2>
+        <p class="version">版本 1.0.0</p>
+        
+        <div class="about-description">
+          <p>一个AI驱动的浏览器插件，帮助你理解网页内容。</p>
+          <h4>主要功能：</h4>
+          <ul>
+            <li>🔍 智能分析和讲解页面内容</li>
+            <li>✏️ 画线标注重要元素</li>
+            <li>📜 自动翻页浏览</li>
+            <li>🎤 语音对话交互</li>
+            <li>🤖 支持多种AI模型</li>
+          </ul>
+        </div>
+
+        <div class="about-links">
+          <a href="https://github.com" target="_blank" class="link-btn">
+            📚 使用文档
+          </a>
+          <a href="https://github.com" target="_blank" class="link-btn">
+            ⭐ GitHub
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

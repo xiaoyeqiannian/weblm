@@ -1,0 +1,22 @@
+{
+  "name": "page-explainer-extension",
+  "version": "1.0.0",
+  "description": "AI驱动的网页内容讲解助手，支持画线标注、自动翻页和语音对话",
+  "scripts": {
+    "build": "node scripts/build.js",
+    "dev": "node scripts/build.js --watch",
+    "pack": "cd dist && zip -r ../page-explainer-extension.zip ."
+  },
+  "devDependencies": {
+    "esbuild": "^0.19.0"
+  },
+  "keywords": [
+    "chrome-extension",
+    "ai",
+    "page-explainer",
+    "voice",
+    "llm"
+  ],
+  "author": "",
+  "license": "MIT"
+}
