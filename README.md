@@ -1,4 +1,4 @@
-# Page Explainer AI Agent - 网页讲解助手
+# WebLM AI Agent - 网页讲解助手
 
 一个 AI 驱动的 Chrome 浏览器扩展，用于网页内容讲解，支持画线标注、自动翻页和语音对话。
 

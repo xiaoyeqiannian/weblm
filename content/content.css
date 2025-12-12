@@ -349,8 +349,8 @@
   right: 18px;
   bottom: 18px;
   z-index: 2147483648;
-  width: 56px;
-  height: 56px;
+  width: 42px;
+  height: 42px;
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -365,6 +365,8 @@
 #pe-floating-btn:hover { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0,0,0,0.25); }
 
 #pe-floating-btn:active { transform: translateY(-1px); }
+
+#pe-floating-btn.pe-dragging { cursor: grabbing; opacity: 0.95; }
 
 /* 遮罩 */
 #pe-overlay {

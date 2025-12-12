@@ -100,6 +100,22 @@ function createPanel() {
   document.body.appendChild(floating);
   panelUI = panel;
 
+  // 恢复悬浮按钮位置（如果已保存）
+  try {
+    chrome.storage.local.get(['floatingButtonPosition'], (res) => {
+      const pos = res?.floatingButtonPosition;
+      if (pos && pos.left !== undefined && pos.top !== undefined) {
+        floating.style.left = pos.left + 'px';
+        floating.style.top = pos.top + 'px';
+        floating.style.right = 'auto';
+        floating.style.bottom = 'auto';
+      }
+    });
+  } catch (e) {}
+
+  // 使悬浮按钮可拖动
+  makeFloatingDraggable(floating);
+
   // 绑定事件
   bindPanelEvents();
 
@@ -280,6 +296,87 @@ function bindPanelEvents() {
       console.error('打开 Side Panel 失败:', error);
       try { floatingBtn.style.display = 'flex'; } catch (e) {}
     }
+  });
+}
+
+// 悬浮按钮拖动实现（使用 pointer events）
+function makeFloatingDraggable(btn) {
+  if (!btn) return;
+  let isDragging = false;
+  let startX = 0;
+  let startY = 0;
+  let origLeft = 0;
+  let origTop = 0;
+  let pointerId = null;
+
+  btn.addEventListener('pointerdown', (e) => {
+    // 只响应主键
+    if (e.button !== 0) return;
+    e.preventDefault();
+    pointerId = e.pointerId;
+    btn.setPointerCapture(pointerId);
+    startX = e.clientX;
+    startY = e.clientY;
+    const rect = btn.getBoundingClientRect();
+    origLeft = rect.left;
+    origTop = rect.top;
+    isDragging = false;
+    btn.classList.add('pe-dragging');
+  });
+
+  btn.addEventListener('pointermove', (e) => {
+    if (pointerId !== e.pointerId) return;
+    e.preventDefault();
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    if (!isDragging && Math.hypot(dx, dy) < 5) return; // 阈值
+    isDragging = true;
+    const newLeft = Math.max(0, Math.min(window.innerWidth - btn.offsetWidth, origLeft + dx));
+    const newTop = Math.max(0, Math.min(window.innerHeight - btn.offsetHeight, origTop + dy));
+    btn.style.left = newLeft + 'px';
+    btn.style.top = newTop + 'px';
+    btn.style.right = 'auto';
+    btn.style.bottom = 'auto';
+  });
+
+  btn.addEventListener('pointerup', async (e) => {
+    if (pointerId !== e.pointerId) return;
+    try { btn.releasePointerCapture(pointerId); } catch (err) {}
+    btn.classList.remove('pe-dragging');
+    if (isDragging) {
+      // 保存位置
+      try {
+        const left = parseInt(btn.style.left || btn.getBoundingClientRect().left, 10);
+        const top = parseInt(btn.style.top || btn.getBoundingClientRect().top, 10);
+        chrome.storage.local.set({ floatingButtonPosition: { left, top } });
+      } catch (err) {}
+    } else {
+      // 隐藏悬浮按钮以避免视觉闪烁
+      btn.style.display = 'none';
+      // 不是拖动，视为点击（触发打开侧边栏）
+      try {
+        const response = await chrome.runtime.sendMessage({ type: 'OPEN_SIDE_PANEL', source: 'content_script' });
+        if (!response?.success) {
+          // 如果需要用户手势，则告知用户通过扩展图标打开
+          if (response?.error === 'needs_user_gesture') {
+            // 恢复按钮显示
+            btn.style.display = 'flex';
+            // 可考虑显示 tooltip 或提示，这里暂时使用 alert
+            // alert('请点击扩展图标以打开侧边栏');
+          }
+        }
+      } catch (err) {
+        // 忽略
+      }
+    }
+    pointerId = null;
+  });
+
+  // 如果用户在拖动时取消（pointercancel/leave）也结束拖动
+  btn.addEventListener('pointercancel', (e) => {
+    try { btn.releasePointerCapture(e.pointerId); } catch (err) {}
+    btn.classList.remove('pe-dragging');
+    pointerId = null;
   });
 }
 
