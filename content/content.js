@@ -257,21 +257,28 @@ function bindPanelEvents() {
     closeSidebar();
   });
 
-  // 悬浮按钮打开 Side Panel
+  // 悬浮按钮打开 Side Panel（立即隐藏悬浮按钮以避免视觉闪烁）
   floatingBtn?.addEventListener('click', async () => {
     try {
+      // 立即隐藏悬浮按钮（在 UI 上立即反应）
+      floatingBtn.style.display = 'none';
+
       // 请求 background script 打开 Side Panel
-      // 注意：我们不能直接从 content script 打开 sidePanel
-      // 需要通过 background script，但要传递 tab 信息
       const response = await chrome.runtime.sendMessage({ 
         type: 'OPEN_SIDE_PANEL',
         source: 'content_script'
       });
+
       if (!response?.success) {
         console.error('打开 Side Panel 失败:', response?.error);
+        // 恢复悬浮按钮
+        floatingBtn.style.display = 'flex';
+      } else {
+        // 正常打开, keep it hidden
       }
     } catch (error) {
       console.error('打开 Side Panel 失败:', error);
+      try { floatingBtn.style.display = 'flex'; } catch (e) {}
     }
   });
 }
@@ -762,8 +769,23 @@ function monitorSidePanelState() {
   const floatingBtn = document.getElementById('pe-floating-btn');
   if (!floatingBtn) return;
 
-  // 定期检查 Side Panel 是否打开
-  // 注意：Chrome 没有直接 API 查询 Side Panel 状态，我们使用消息通信
+  // 立即检查 Side Panel 的初始状态
+  (async () => {
+    try {
+      const response = await chrome.runtime.sendMessage({ type: 'CHECK_SIDE_PANEL_STATE' });
+      console.log('[Content] CHECK_SIDE_PANEL_STATE =>', response);
+      if (response && response.isOpen) {
+        floatingBtn.style.display = 'none';
+      } else {
+        floatingBtn.style.display = 'flex';
+      }
+    } catch (error) {
+      console.warn('[Content] CHECK_SIDE_PANEL_STATE 失败:', error);
+      floatingBtn.style.display = 'flex';
+    }
+  })();
+
+  // 定期检查 Side Panel 状态（作为后备机制）
   setInterval(async () => {
     try {
       const response = await chrome.runtime.sendMessage({ type: 'CHECK_SIDE_PANEL_STATE' });
@@ -776,10 +798,11 @@ function monitorSidePanelState() {
       // 如果消息发送失败，保持悬浮按钮可见
       floatingBtn.style.display = 'flex';
     }
-  }, 1000);
+  }, 2000);
 
-  // 也可以监听消息来立即更新状态
+  // 监听消息来立即更新状态并记录日志
   chrome.runtime.onMessage.addListener((message) => {
+    console.log('[Content] 收到消息:', message.type, message);
     if (message.type === 'SIDE_PANEL_STATE_CHANGED') {
       if (message.isOpen) {
         floatingBtn.style.display = 'none';

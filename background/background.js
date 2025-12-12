@@ -391,6 +391,8 @@ class LLMProvider {
 // ============== Background 主逻辑 ==============
 
 let llmProvider = null;
+// 追踪每个窗口的 Side Panel 打开状态
+const sidePanelStateByWindow = {};
 
 async function init() {
   console.log('[Background] 开始初始化...');
@@ -486,9 +488,9 @@ async function handleMessage(message, sender) {
     
     case 'OPEN_SIDE_PANEL':
       try {
-        // 从 sender 获取标签页信息
+        // 从 sender 获取标签页信息或从 data 中读取 windowId
         const tabId = sender.tab?.id;
-        const windowId = sender.tab?.windowId;
+        const windowId = data?.windowId || sender.tab?.windowId;
         
         if (!windowId) {
           throw new Error('无法获取窗口信息');
@@ -496,28 +498,114 @@ async function handleMessage(message, sender) {
         
         // 使用 windowId 打开 Side Panel
         await chrome.sidePanel.open({ windowId: windowId });
-        
-        // 通知该标签页 Side Panel 已打开
-        if (tabId) {
-          chrome.tabs.sendMessage(tabId, { 
-            type: 'SIDE_PANEL_STATE_CHANGED', 
-            isOpen: true 
-          }).catch(() => {}); // 忽略错误
+
+        // 记录状态并通知该窗口内的所有标签页 Side Panel 已打开
+        sidePanelStateByWindow[windowId] = true;
+        try {
+          const tabs = await chrome.tabs.query({ windowId: windowId });
+          console.log('[Background] OPEN_SIDE_PANEL 通知 tabs in window:', windowId, tabs.map(t => t.id));
+          // 先通过消息通知
+          tabs.forEach(t => {
+            chrome.tabs.sendMessage(t.id, { type: 'SIDE_PANEL_STATE_CHANGED', isOpen: true }).catch((err) => {
+              console.warn('[Background] 通知标签页失败:', t.id, err?.message || err);
+            });
+          });
+          // 后备方案：如果内容脚本未注册消息监听，直接注入并修改 DOM
+          for (const t of tabs) {
+            try {
+              await chrome.scripting.executeScript({
+                target: { tabId: t.id },
+                func: (isOpen) => {
+                  try {
+                    const btn = document.getElementById('pe-floating-btn');
+                    if (!btn) return;
+                    btn.style.display = isOpen ? 'none' : 'flex';
+                  } catch (e) {}
+                },
+                args: [true]
+              });
+            } catch (err) {
+              // 忽略注入失败（例如 chrome:// 页面）
+            }
+          }
+        } catch (e) {
+          console.warn('[Background] 查询标签页或通知失败:', e);
         }
         
         return { success: true };
       } catch (error) {
+        // 如果是由于缺少用户手势导致的错误，记录为警告并返回特定错误
+        if (error && /may only be called in response to a user gesture/i.test(error.message)) {
+          console.warn('[Background] sidePanel.open() 需要用户手势，无法在此上下文打开侧边栏');
+          return { success: false, error: 'needs_user_gesture' };
+        }
         console.error('[Background] 打开 Side Panel 失败:', error);
         return { success: false, error: error.message };
+      }
+
+    case 'SIDE_PANEL_OPENED':
+      try {
+        const windowId = data?.windowId || sender?.tab?.windowId;
+        if (windowId) {
+          sidePanelStateByWindow[windowId] = true;
+          const tabs = await chrome.tabs.query({ windowId: windowId });
+          tabs.forEach(t => {
+            chrome.tabs.sendMessage(t.id, { type: 'SIDE_PANEL_STATE_CHANGED', isOpen: true }).catch(() => {});
+          });
+        }
+        return { success: true };
+      } catch (err) {
+        console.warn('[Background] 处理 SIDE_PANEL_OPENED 失败:', err);
+        return { success: false, error: err?.message };
       }
     
     case 'CHECK_SIDE_PANEL_STATE':
       try {
         // Chrome 没有直接 API 查询 Side Panel 状态
-        // 我们返回一个默认状态，实际状态由前端维护
-        return { success: true, isOpen: false };
+        // 我们返回由 background 维护的状态（如果存在）
+        const windowId = sender?.tab?.windowId;
+        const isOpen = windowId ? !!sidePanelStateByWindow[windowId] : false;
+        return { success: true, isOpen };
       } catch (error) {
         return { success: false, isOpen: false };
+      }
+
+    case 'CLOSE_SIDE_PANEL':
+      try {
+        // windowId may be from sender.tab or message data
+        const windowId = data?.windowId || sender?.tab?.windowId;
+        if (windowId) {
+          sidePanelStateByWindow[windowId] = false;
+          const tabs = await chrome.tabs.query({ windowId: windowId });
+          console.log('[Background] CLOSE_SIDE_PANEL 通知 tabs in window:', windowId, tabs.map(t => t.id));
+          tabs.forEach(t => {
+            chrome.tabs.sendMessage(t.id, { type: 'SIDE_PANEL_STATE_CHANGED', isOpen: false }).catch((err) => {
+              console.warn('[Background] 通知标签页失败:', t.id, err?.message || err);
+            });
+          });
+          // 后备方案：直接注入脚本显示按钮
+          for (const t of tabs) {
+            try {
+              await chrome.scripting.executeScript({
+                target: { tabId: t.id },
+                func: (isOpen) => {
+                  try {
+                    const btn = document.getElementById('pe-floating-btn');
+                    if (!btn) return;
+                    btn.style.display = isOpen ? 'none' : 'flex';
+                  } catch (e) {}
+                },
+                args: [false]
+              });
+            } catch (err) {
+              // 忽略注入失败
+            }
+          }
+        }
+        return { success: true };
+      } catch (error) {
+        console.error('[Background] 关闭 Side Panel 处理失败:', error);
+        return { success: false, error: error.message };
       }
     
     default:
@@ -581,6 +669,19 @@ chrome.action.onClicked.addListener(async (tab) => {
   console.log('[Background] 插件图标被点击，打开 Side Panel');
   try {
     await chrome.sidePanel.open({ windowId: tab.windowId });
+
+    // 标记为已打开
+    sidePanelStateByWindow[tab.windowId] = true;
+
+    // 通知该窗口内的所有选项卡 Side Panel 已打开
+    try {
+      const tabs = await chrome.tabs.query({ windowId: tab.windowId });
+      tabs.forEach(t => {
+        chrome.tabs.sendMessage(t.id, { type: 'SIDE_PANEL_STATE_CHANGED', isOpen: true }).catch(() => {});
+      });
+    } catch (e) {
+      // 忽略错误
+    }
   } catch (error) {
     console.error('[Background] 打开 Side Panel 失败:', error);
   }

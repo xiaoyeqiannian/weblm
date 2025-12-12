@@ -56,6 +56,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     settingsView: document.getElementById('sp-settings-view'),
     
     // 头部按钮
+
+// (注意) sidepanel 的关闭通知将在页面卸载时发送（在 DOMContentLoaded 后绑定）
     settingsBtn: document.getElementById('sp-settings-btn'),
     newConvBtn: document.getElementById('sp-new-conv-btn'),
     backBtn: document.getElementById('sp-back-btn'),
@@ -535,6 +537,51 @@ async function loadVoices() {
   } else {
     speechSynthesis.onvoiceschanged = loadVoiceList;
   }
+
+  // 通知 background: sidepanel 已打开（让 background 能广播状态）
+  try {
+    const currentWindow = await chrome.windows.getCurrent();
+    // 通知 background: Side Panel 已打开（不要请求打开，它已经打开）
+    chrome.runtime.sendMessage({ type: 'SIDE_PANEL_OPENED', data: { windowId: currentWindow.id } });
+  } catch (e) {}
+
+  // 在页面卸载时告知 background 侧边栏已关闭
+  window.addEventListener('beforeunload', async () => {
+    try {
+      const currentWindow = await chrome.windows.getCurrent();
+      chrome.runtime.sendMessage({ type: 'CLOSE_SIDE_PANEL', data: { windowId: currentWindow.id } });
+    } catch (e) {
+      try {
+        chrome.runtime.sendMessage({ type: 'CLOSE_SIDE_PANEL' });
+      } catch (err) {}
+    }
+  });
+
+  // 当侧边栏变为不可见时（用户关闭或切换）也发送关闭通知
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      (async () => {
+        try {
+          const cw = await chrome.windows.getCurrent();
+          chrome.runtime.sendMessage({ type: 'CLOSE_SIDE_PANEL', data: { windowId: cw.id } });
+        } catch (e) {
+          try { chrome.runtime.sendMessage({ type: 'CLOSE_SIDE_PANEL' }); } catch (err) {}
+        }
+      })();
+    }
+  });
+
+  // pagehide 是备用事件
+  window.addEventListener('pagehide', () => {
+    (async () => {
+      try {
+        const cw = await chrome.windows.getCurrent();
+        chrome.runtime.sendMessage({ type: 'CLOSE_SIDE_PANEL', data: { windowId: cw.id } });
+      } catch (e) {
+        try { chrome.runtime.sendMessage({ type: 'CLOSE_SIDE_PANEL' }); } catch (err) {}
+      }
+    })();
+  });
 }
 
 // 工具函数：转义 HTML
