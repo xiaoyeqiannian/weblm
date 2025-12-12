@@ -48,7 +48,6 @@ function createPanel() {
   panel.id = 'page-explainer-panel';
   panel.innerHTML = `
     <div class="pe-panel-header">
-      <span class="pe-panel-title">🤖 WebLM</span>
       <div class="pe-panel-controls">
         <button class="pe-btn pe-btn-icon pe-minimize-btn" title="最小化">−</button>
         <button class="pe-btn pe-btn-icon pe-close-btn" title="关闭">×</button>
@@ -66,14 +65,9 @@ function createPanel() {
         </div>
       </div>
     </div>
-      <div class="pe-action-buttons">
-        <button class="pe-btn pe-btn-primary" id="pe-explain-btn">📖 讲解页面</button>
-        <button class="pe-btn" id="pe-scroll-btn">📜 自动翻页</button>
-        <button class="pe-btn" id="pe-voice-btn">🎤 语音输入</button>
-        <button class="pe-btn" id="pe-new-conv-btn" title="新建对话">🆕 新建对话</button>
-      </div>
       <div class="pe-input-container">
         <input type="text" class="pe-input" id="pe-input" placeholder="输入你的问题..." />
+        <button class="pe-btn pe-input-voice" id="pe-input-voice-btn" title="语音输入">🎤</button>
         <button class="pe-btn pe-btn-primary pe-send-btn" id="pe-send-btn">发送</button>
       </div>
       <div class="pe-voice-indicator" id="pe-voice-indicator" style="display: none;">
@@ -129,9 +123,8 @@ function bindPanelEvents() {
   const messagesContainer = document.getElementById('pe-messages');
   const input = document.getElementById('pe-input');
   const sendBtn = document.getElementById('pe-send-btn');
-  const explainBtn = document.getElementById('pe-explain-btn');
-  const scrollBtn = document.getElementById('pe-scroll-btn');
-  const voiceBtn = document.getElementById('pe-voice-btn');
+  // Removed explain and scroll buttons from UI
+  const inputVoiceBtn = document.getElementById('pe-input-voice-btn');
   const minimizeBtn = panel.querySelector('.pe-minimize-btn');
   const closeBtn = panel.querySelector('.pe-close-btn');
   const voiceIndicator = document.getElementById('pe-voice-indicator');
@@ -185,55 +178,30 @@ function bindPanelEvents() {
   });
 
   // 讲解页面
-  explainBtn.addEventListener('click', async () => {
-    explainBtn.disabled = true;
-    explainBtn.textContent = '🔄 分析中...';
-    
-    try {
-      await explainPage();
-    } finally {
-      explainBtn.disabled = false;
-      explainBtn.textContent = '📖 讲解页面';
-    }
-  });
+  // explain button removed
 
   // 自动翻页
   let isAutoScrolling = false;
-  scrollBtn.addEventListener('click', () => {
-    if (isAutoScrolling) {
-      autoScrollService.stopAutoScroll();
-      scrollBtn.textContent = '📜 自动翻页';
-      isAutoScrolling = false;
-    } else {
-      autoScrollService.startAutoScroll({
-        speed: 'normal',
-        onComplete: () => {
-          scrollBtn.textContent = '📜 自动翻页';
-          isAutoScrolling = false;
-          addMessage('已滚动到页面底部', 'assistant');
-        }
-      });
-      scrollBtn.textContent = '⏹️ 停止滚动';
-      isAutoScrolling = true;
-    }
-  });
+  // scroll button removed
 
   // 新建对话
   const newConvBtn = document.getElementById('pe-new-conv-btn');
-  newConvBtn.addEventListener('click', async () => {
-    const confirmed = confirm('确定要新建对话吗？这将清空当前聊天记录并重置会话。');
-    if (!confirmed) return;
-    newConversation();
-  });
+  if (newConvBtn) {
+    newConvBtn.addEventListener('click', async () => {
+      const confirmed = confirm('确定要新建对话吗？这将清空当前聊天记录并重置会话。');
+      if (!confirmed) return;
+      newConversation();
+    });
+  }
 
   // 语音输入
   voiceService.onStart = () => {
-    voiceBtn.classList.add('pe-active');
+    if (inputVoiceBtn) inputVoiceBtn.classList.add('pe-active');
     voiceIndicator.style.display = 'flex';
   };
 
   voiceService.onEnd = () => {
-    voiceBtn.classList.remove('pe-active');
+    if (inputVoiceBtn) inputVoiceBtn.classList.remove('pe-active');
     voiceIndicator.style.display = 'none';
   };
 
@@ -252,9 +220,11 @@ function bindPanelEvents() {
     addMessage('语音识别失败: ' + error, 'system');
   };
 
-  voiceBtn.addEventListener('click', () => {
-    voiceService.toggleListening();
-  });
+  if (inputVoiceBtn) {
+    inputVoiceBtn.addEventListener('click', () => {
+      voiceService.toggleListening();
+    });
+  }
 
   // 最小化
   minimizeBtn.addEventListener('click', () => {

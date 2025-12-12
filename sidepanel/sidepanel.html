@@ -10,10 +10,7 @@
   <div class="sidepanel-container">
     <!-- 头部 -->
     <header class="sp-header">
-      <div class="sp-header-title">
-        <span class="sp-logo">🤖</span>
-        <h1>WebLM</h1>
-      </div>
+      <!-- header title removed per request (logo + title) -->
       <div class="sp-header-controls">
         <button class="sp-btn sp-btn-icon" id="sp-settings-btn" title="设置">⚙️</button>
         <button class="sp-btn sp-btn-icon" id="sp-new-conv-btn" title="新建对话">🆕</button>
@@ -32,19 +29,9 @@
       </div>
 
       <!-- 操作按钮 -->
+      <!-- 操作按钮: removed explain & auto-scroll, voice moved to input -->
       <div class="sp-action-buttons">
-        <button class="sp-btn sp-btn-action" id="sp-explain-btn">
-          <span class="icon">📖</span>
-          <span>讲解页面</span>
-        </button>
-        <button class="sp-btn sp-btn-action" id="sp-scroll-btn">
-          <span class="icon">📜</span>
-          <span>自动翻页</span>
-        </button>
-        <button class="sp-btn sp-btn-action" id="sp-voice-btn">
-          <span class="icon">🎤</span>
-          <span>语音输入</span>
-        </button>
+        <!-- Keeping only new conversation/other actions if needed -->
       </div>
 
       <!-- 输入区域 -->
@@ -55,6 +42,7 @@
           id="sp-input" 
           placeholder="输入你的问题..."
         />
+        <button class="sp-btn sp-input-voice" id="sp-input-voice-btn" title="语音输入">🎤</button>
         <button class="sp-btn sp-btn-primary sp-send-btn" id="sp-send-btn">
           发送
         </button>

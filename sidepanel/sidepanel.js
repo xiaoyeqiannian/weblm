@@ -68,9 +68,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     sendBtn: document.getElementById('sp-send-btn'),
     
     // 操作按钮
-    explainBtn: document.getElementById('sp-explain-btn'),
-    scrollBtn: document.getElementById('sp-scroll-btn'),
-    voiceBtn: document.getElementById('sp-voice-btn'),
+    // explainBtn & scrollBtn removed from UI
+    inputVoiceBtn: document.getElementById('sp-input-voice-btn'),
     
     // 语音指示器
     voiceIndicator: document.getElementById('sp-voice-indicator'),
@@ -122,9 +121,8 @@ function bindEvents() {
   elements.input.addEventListener('keydown', handleInputHistory);
   
   // 操作按钮
-  elements.explainBtn.addEventListener('click', () => explainPage());
-  elements.scrollBtn.addEventListener('click', () => toggleAutoScroll());
-  elements.voiceBtn.addEventListener('click', () => toggleVoiceInput());
+  // explain & scroll removed from UI
+  if (elements.inputVoiceBtn) elements.inputVoiceBtn.addEventListener('click', () => toggleVoiceInput());
   
   // 设置
   elements.modelType.addEventListener('change', handleModelTypeChange);
