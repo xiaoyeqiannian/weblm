@@ -273,30 +273,7 @@ function bindPanelEvents() {
     closeSidebar();
   });
 
-  // 悬浮按钮打开 Side Panel（立即隐藏悬浮按钮以避免视觉闪烁）
-  floatingBtn?.addEventListener('click', async () => {
-    try {
-      // 立即隐藏悬浮按钮（在 UI 上立即反应）
-      floatingBtn.style.display = 'none';
-
-      // 请求 background script 打开 Side Panel
-      const response = await chrome.runtime.sendMessage({ 
-        type: 'OPEN_SIDE_PANEL',
-        source: 'content_script'
-      });
-
-      if (!response?.success) {
-        console.error('打开 Side Panel 失败:', response?.error);
-        // 恢复悬浮按钮
-        floatingBtn.style.display = 'flex';
-      } else {
-        // 正常打开, keep it hidden
-      }
-    } catch (error) {
-      console.error('打开 Side Panel 失败:', error);
-      try { floatingBtn.style.display = 'flex'; } catch (e) {}
-    }
-  });
+  // 点击/拖动逻辑通过 pointer 事件处理，移除额外的 click 监听以避免拖动后误触发打开
 }
 
 // 悬浮按钮拖动实现（使用 pointer events）
