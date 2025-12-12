@@ -40,23 +40,30 @@
 }
 
 /* 主面板 */
+/* 侧边栏 */
 #page-explainer-panel {
   position: fixed;
-  right: 20px;
-  bottom: 20px;
-  width: 380px;
-  max-height: 600px;
-  background: #ffffff;
-  border-radius: 16px;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  right: 0;
+  top: 0;
+  height: 100vh;
+  width: 420px;
+  max-width: 100%;
+  background: transparent; /* make container transparent so corners outside white inner are transparent */
+  border-radius: 0 0 0 12px;
+  box-shadow: -6px 0 40px rgba(0, 0, 0, 0.15);
   z-index: 2147483647;
   display: flex;
   flex-direction: column;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
   font-size: 14px;
   color: #333;
-  animation: pe-fade-in 0.3s ease-out;
+  transform: translateX(100%);
+  transition: transform 240ms cubic-bezier(.2,.8,.2,1);
   overflow: hidden;
+}
+
+#page-explainer-panel.pe-open {
+  transform: translateX(0);
 }
 
 #page-explainer-panel.pe-minimized {
@@ -78,6 +85,8 @@
   cursor: move;
   user-select: none;
   border-radius: 16px 16px 0 0;
+  position: relative;
+  z-index: 3;
 }
 
 .pe-panel-title {
@@ -91,12 +100,24 @@
 }
 
 /* 面板主体 */
+.pe-inner {
+  background: #ffffff;
+  border-radius: 12px; /* round corners of inner white box */
+  margin: 56px 12px 12px 12px; /* margin-top equals header height to avoid overlap */
+  position: relative;
+  height: calc(100vh - 24px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 2;
+}
+
 .pe-panel-body {
   flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 12px;
+  padding: 18px;
   gap: 12px;
 }
 
@@ -117,6 +138,7 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  padding-bottom: 140px; /* avoid overlap with bottom input */
 }
 
 .pe-messages::-webkit-scrollbar {
@@ -215,6 +237,11 @@
 .pe-input-container {
   display: flex;
   gap: 8px;
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 18px;
+  align-items: center;
 }
 
 .pe-input {
@@ -315,6 +342,42 @@
   color: #856404;
   font-size: 13px;
 }
+
+/* 悬浮按钮 */
+#pe-floating-btn {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 2147483648;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #fff;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+#pe-floating-btn:hover { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0,0,0,0.25); }
+
+#pe-floating-btn:active { transform: translateY(-1px); }
+
+/* 遮罩 */
+#pe-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.35);
+  z-index: 2147483646;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+
+#pe-overlay.pe-visible { opacity: 1; pointer-events: auto; }
 
 .pe-voice-waves {
   display: flex;

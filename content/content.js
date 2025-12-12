@@ -34,6 +34,9 @@ function init() {
   // 监听标注事件
   window.addEventListener('page-explainer-annotation', handleAnnotationEvent);
 
+  // 监听 Side Panel 状态变化
+  monitorSidePanelState();
+
   isInitialized = true;
   console.log('Page Explainer Content Script 已初始化');
 }
@@ -51,7 +54,8 @@ function createPanel() {
         <button class="pe-btn pe-btn-icon pe-close-btn" title="关闭">×</button>
       </div>
     </div>
-    <div class="pe-panel-body">
+    <div class="pe-inner">
+      <div class="pe-panel-body">
       <div class="pe-chat-container">
         <div class="pe-messages" id="pe-messages">
           <div class="pe-message pe-message-assistant">
@@ -61,6 +65,7 @@ function createPanel() {
           </div>
         </div>
       </div>
+    </div>
       <div class="pe-action-buttons">
         <button class="pe-btn pe-btn-primary" id="pe-explain-btn">📖 讲解页面</button>
         <button class="pe-btn" id="pe-scroll-btn">📜 自动翻页</button>
@@ -81,6 +86,18 @@ function createPanel() {
   `;
 
   document.body.appendChild(panel);
+  panel.style.display = 'none';
+  // 创建遮罩
+  const overlay = document.createElement('div');
+  overlay.id = 'pe-overlay';
+  document.body.appendChild(overlay);
+
+  // 创建悬浮按钮
+  const floating = document.createElement('button');
+  floating.id = 'pe-floating-btn';
+  floating.setAttribute('aria-label', '打开/关闭 WebLM 边栏');
+  floating.innerHTML = '🤖';
+  document.body.appendChild(floating);
   panelUI = panel;
 
   // 绑定事件
@@ -102,6 +119,8 @@ function bindPanelEvents() {
   const minimizeBtn = panel.querySelector('.pe-minimize-btn');
   const closeBtn = panel.querySelector('.pe-close-btn');
   const voiceIndicator = document.getElementById('pe-voice-indicator');
+  const overlay = document.getElementById('pe-overlay');
+  const floatingBtn = document.getElementById('pe-floating-btn');
 
   // 发送消息
   const sendMessage = async () => {
@@ -227,12 +246,74 @@ function bindPanelEvents() {
     minimizeBtn.textContent = panel.classList.contains('pe-minimized') ? '+' : '−';
   });
 
-  // 关闭
+  // 关闭（使用统一函数）
   closeBtn.addEventListener('click', () => {
-    panel.style.display = 'none';
+    closeSidebar();
     annotationService.clear();
   });
+
+  // 点击遮罩关闭
+  overlay?.addEventListener('click', () => {
+    closeSidebar();
+  });
+
+  // 悬浮按钮打开 Side Panel
+  floatingBtn?.addEventListener('click', async () => {
+    try {
+      // 请求 background script 打开 Side Panel
+      // 注意：我们不能直接从 content script 打开 sidePanel
+      // 需要通过 background script，但要传递 tab 信息
+      const response = await chrome.runtime.sendMessage({ 
+        type: 'OPEN_SIDE_PANEL',
+        source: 'content_script'
+      });
+      if (!response?.success) {
+        console.error('打开 Side Panel 失败:', response?.error);
+      }
+    } catch (error) {
+      console.error('打开 Side Panel 失败:', error);
+    }
+  });
 }
+
+function toggleSidebar() {
+  const panel = document.getElementById('page-explainer-panel');
+  const overlay = document.getElementById('pe-overlay');
+  if (!panel) return;
+  const isOpen = panel.classList.toggle('pe-open');
+  if (isOpen) {
+    overlay.classList.add('pe-visible');
+    panel.style.display = 'flex';
+    // set focus to input
+    setTimeout(() => {
+      const inp = document.getElementById('pe-input');
+      if (inp) inp.focus();
+    }, 300);
+  } else {
+    overlay.classList.remove('pe-visible');
+    // 延迟隐藏以便动画
+    setTimeout(() => { panel.style.display = 'none'; }, 240);
+  }
+}
+
+function closeSidebar() {
+  const panel = document.getElementById('page-explainer-panel');
+  const overlay = document.getElementById('pe-overlay');
+  if (!panel) return;
+  panel.classList.remove('pe-open');
+  overlay.classList.remove('pe-visible');
+  setTimeout(() => { panel.style.display = 'none'; }, 240);
+}
+
+// Escape 键关闭侧栏
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    const panel = document.getElementById('page-explainer-panel');
+    if (panel && panel.classList.contains('pe-open')) {
+      closeSidebar();
+    }
+  }
+});
 
 // 添加消息到聊天
 function addMessage(content, type) {
@@ -530,6 +611,42 @@ function handleMessage(message, sender, sendResponse) {
       explainPage();
       break;
     
+    case 'GET_PAGE_TEXT':
+      // 返回页面文本给 Side Panel
+      sendResponse(getPageText());
+      return true;
+    
+    case 'START_AUTO_SCROLL':
+      autoScrollService.startAutoScroll({
+        speed: 'normal',
+        onComplete: () => {
+          console.log('自动滚动完成');
+        }
+      });
+      break;
+    
+    case 'STOP_AUTO_SCROLL':
+      autoScrollService.stopAutoScroll();
+      break;
+    
+    case 'START_VOICE':
+      if (voiceService) {
+        voiceService.startListening((text) => {
+          // 将语音识别的文本发送给 Side Panel
+          chrome.runtime.sendMessage({
+            type: 'VOICE_RESULT',
+            text: text
+          });
+        });
+      }
+      break;
+    
+    case 'STOP_VOICE':
+      if (voiceService) {
+        voiceService.stopListening();
+      }
+      break;
+    
     case 'COMMAND':
       handleCommand(message.command);
       break;
@@ -638,6 +755,39 @@ function formatMarkdown(text) {
     .replace(/`(.+?)`/g, '<code>$1</code>')
     .replace(/\n/g, '<br>')
     .replace(/\[标注[:：]([^\]]+)\]/g, '<span class="pe-annotation-tag">📌 $1</span>');
+}
+
+// 监听 Side Panel 状态
+function monitorSidePanelState() {
+  const floatingBtn = document.getElementById('pe-floating-btn');
+  if (!floatingBtn) return;
+
+  // 定期检查 Side Panel 是否打开
+  // 注意：Chrome 没有直接 API 查询 Side Panel 状态，我们使用消息通信
+  setInterval(async () => {
+    try {
+      const response = await chrome.runtime.sendMessage({ type: 'CHECK_SIDE_PANEL_STATE' });
+      if (response && response.isOpen) {
+        floatingBtn.style.display = 'none';
+      } else {
+        floatingBtn.style.display = 'flex';
+      }
+    } catch (error) {
+      // 如果消息发送失败，保持悬浮按钮可见
+      floatingBtn.style.display = 'flex';
+    }
+  }, 1000);
+
+  // 也可以监听消息来立即更新状态
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message.type === 'SIDE_PANEL_STATE_CHANGED') {
+      if (message.isOpen) {
+        floatingBtn.style.display = 'none';
+      } else {
+        floatingBtn.style.display = 'flex';
+      }
+    }
+  });
 }
 
 // 启动

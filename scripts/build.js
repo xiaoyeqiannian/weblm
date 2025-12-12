@@ -15,6 +15,9 @@ const filesToCopy = [
   { src: 'popup/popup.html', dest: 'popup/popup.html' },
   { src: 'popup/popup.css', dest: 'popup/popup.css' },
   { src: 'popup/popup.js', dest: 'popup/popup.js' },
+  { src: 'sidepanel/sidepanel.html', dest: 'sidepanel/sidepanel.html' },
+  { src: 'sidepanel/sidepanel.css', dest: 'sidepanel/sidepanel.css' },
+  { src: 'sidepanel/sidepanel.js', dest: 'sidepanel/sidepanel.js' },
   { src: 'icons', dest: 'icons' },
   { src: 'src/core', dest: 'src/core' }
 ];

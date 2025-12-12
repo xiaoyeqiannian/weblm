@@ -484,6 +484,42 @@ async function handleMessage(message, sender) {
         return { success: false, error: error.message };
       }
     
+    case 'OPEN_SIDE_PANEL':
+      try {
+        // 从 sender 获取标签页信息
+        const tabId = sender.tab?.id;
+        const windowId = sender.tab?.windowId;
+        
+        if (!windowId) {
+          throw new Error('无法获取窗口信息');
+        }
+        
+        // 使用 windowId 打开 Side Panel
+        await chrome.sidePanel.open({ windowId: windowId });
+        
+        // 通知该标签页 Side Panel 已打开
+        if (tabId) {
+          chrome.tabs.sendMessage(tabId, { 
+            type: 'SIDE_PANEL_STATE_CHANGED', 
+            isOpen: true 
+          }).catch(() => {}); // 忽略错误
+        }
+        
+        return { success: true };
+      } catch (error) {
+        console.error('[Background] 打开 Side Panel 失败:', error);
+        return { success: false, error: error.message };
+      }
+    
+    case 'CHECK_SIDE_PANEL_STATE':
+      try {
+        // Chrome 没有直接 API 查询 Side Panel 状态
+        // 我们返回一个默认状态，实际状态由前端维护
+        return { success: true, isOpen: false };
+      } catch (error) {
+        return { success: false, isOpen: false };
+      }
+    
     default:
       return { success: false, error: '未知的消息类型' };
   }
@@ -539,5 +575,15 @@ if (chrome.contextMenus) {
     }
   });
 }
+
+// 监听插件图标点击，打开 Side Panel
+chrome.action.onClicked.addListener(async (tab) => {
+  console.log('[Background] 插件图标被点击，打开 Side Panel');
+  try {
+    await chrome.sidePanel.open({ windowId: tab.windowId });
+  } catch (error) {
+    console.error('[Background] 打开 Side Panel 失败:', error);
+  }
+});
 
 console.log('[Background] Service Worker 已加载');
