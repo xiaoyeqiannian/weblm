@@ -691,27 +691,4 @@ if (chrome.contextMenus) {
   });
 }
 
-// 监听插件图标点击，打开 Side Panel
-chrome.action.onClicked.addListener(async (tab) => {
-  console.log('[Background] 插件图标被点击，打开 Side Panel');
-  try {
-    await chrome.sidePanel.open({ windowId: tab.windowId });
-
-    // 标记为已打开
-    sidePanelStateByWindow[tab.windowId] = true;
-
-    // 通知该窗口内的所有选项卡 Side Panel 已打开
-    try {
-      const tabs = await chrome.tabs.query({ windowId: tab.windowId });
-      tabs.forEach(t => {
-        chrome.tabs.sendMessage(t.id, { type: 'SIDE_PANEL_STATE_CHANGED', isOpen: true }).catch(() => {});
-      });
-    } catch (e) {
-      // 忽略错误
-    }
-  } catch (error) {
-    console.error('[Background] 打开 Side Panel 失败:', error);
-  }
-});
-
 console.log('[Background] Service Worker 已加载');
