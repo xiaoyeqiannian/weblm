@@ -59,7 +59,7 @@ function createPanel() {
         <div class="pe-messages" id="pe-messages">
           <div class="pe-message pe-message-assistant">
             <div class="pe-message-content">
-              你好！我是 WebLM。我可以帮你理解当前页面的内容，回答你的问题，还能用语音和你交流。点击下方按钮开始吧！
+              你好！我是 WebLMddd。我可以帮你理解当前页面的内容，回答你的问题，还能用语音和你交流。点击下方按钮开始吧！
             </div>
           </div>
         </div>
