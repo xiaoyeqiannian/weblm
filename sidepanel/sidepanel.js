@@ -103,7 +103,82 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   // 加载语音列表
   await loadVoices();
+
+  // 接收来自 content/background 的外部消息（例如右键菜单触发的提问）
+  initExternalMessageHandlers();
+  await consumePendingAsk();
 });
+
+function initExternalMessageHandlers() {
+  chrome.runtime.onMessage.addListener((message) => {
+    if (!message || !message.type) return;
+
+    if (message.type === 'SIDE_PANEL_ASK') {
+      const question = message.data?.question || message.data?.text || message.question || '';
+      if (question) {
+        handleIncomingAsk(question);
+      }
+    }
+
+    if (message.type === 'VOICE_RESULT') {
+      const text = message.text || message.data?.text || '';
+      if (text) {
+        handleVoiceResult(text);
+      }
+    }
+  });
+}
+
+async function consumePendingAsk() {
+  let pending = null;
+  try {
+    const res = await chrome.storage.session.get(['pendingSidePanelAsk']);
+    pending = res?.pendingSidePanelAsk || null;
+    if (pending) {
+      await chrome.storage.session.remove(['pendingSidePanelAsk']);
+    }
+  } catch (e) {
+    try {
+      const res = await chrome.storage.local.get(['pendingSidePanelAsk']);
+      pending = res?.pendingSidePanelAsk || null;
+      if (pending) {
+        await chrome.storage.local.remove(['pendingSidePanelAsk']);
+      }
+    } catch (err) {}
+  }
+
+  const question = pending?.question || '';
+  if (question) {
+    handleIncomingAsk(question);
+  }
+}
+
+function handleIncomingAsk(question) {
+  try {
+    showMainView();
+    elements.input.value = '';
+    addMessage(question, 'user');
+    askQuestion(question);
+  } catch (e) {
+    console.warn('处理外部提问失败:', e);
+  }
+}
+
+function handleVoiceResult(text) {
+  // 收到语音结果后，默认当作最终输入并发送
+  try {
+    elements.input.value = '';
+    addMessage(text, 'user');
+    askQuestion(text);
+
+    // 结束录音态 UI
+    elements.voiceIndicator.style.display = 'none';
+    if (elements.inputVoiceBtn) elements.inputVoiceBtn.textContent = '🎤';
+    isVoiceRecording = false;
+  } catch (e) {
+    console.warn('处理语音结果失败:', e);
+  }
+}
 
 function initSidePanelLifecycle() {
   // 已打开通知：尽早发一次，确保 background 能广播状态、content 能隐藏悬浮按钮
@@ -361,6 +436,11 @@ async function askQuestion(question) {
     
     if (response && response.success) {
       updateMessage(loadingMessage, response.response);
+
+      // 让 content script 解析并执行标注高亮
+      try {
+        await sendToContentScript('HANDLE_ANNOTATIONS', { text: response.response });
+      } catch (e) {}
     } else {
       updateMessage(loadingMessage, '回答失败: ' + (response?.error || '未知错误'));
     }
@@ -388,12 +468,12 @@ async function toggleVoiceInput() {
   if (isVoiceRecording) {
     await sendToContentScript('STOP_VOICE');
     elements.voiceIndicator.style.display = 'none';
-    elements.voiceBtn.innerHTML = '<span class="icon">🎤</span><span>语音输入</span>';
+    if (elements.inputVoiceBtn) elements.inputVoiceBtn.textContent = '🎤';
     isVoiceRecording = false;
   } else {
     await sendToContentScript('START_VOICE');
     elements.voiceIndicator.style.display = 'flex';
-    elements.voiceBtn.innerHTML = '<span class="icon">🔴</span><span>停止录音</span>';
+    if (elements.inputVoiceBtn) elements.inputVoiceBtn.textContent = '🔴';
     isVoiceRecording = true;
   }
 }

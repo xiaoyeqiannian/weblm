@@ -421,6 +421,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function handleMessage(message, sender) {
   const { type, data } = message;
 
+  // 避免 background 自己转发消息时被自身再次处理
+  if (message && message._relay === true) {
+    return { success: true, relayed: true };
+  }
+
   switch (type) {
     case 'CAPTURE_VIEWPORT':
       return captureViewport(sender.tab?.id);
@@ -471,6 +476,28 @@ async function handleMessage(message, sender) {
         return { success: true, response };
       } catch (error) {
         console.error('[Background] 分析页面失败:', error);
+        return { success: false, error: error.message };
+      }
+
+    case 'SIDE_PANEL_ASK':
+      try {
+        const question = (data?.question || data?.text || message?.question || '').toString();
+        const payload = { question, ts: Date.now() };
+
+        // 尽量用 session storage（Side Panel 打开时可读取）
+        try {
+          await chrome.storage.session.set({ pendingSidePanelAsk: payload });
+        } catch (e) {
+          await chrome.storage.local.set({ pendingSidePanelAsk: payload });
+        }
+
+        // 如果 sidepanel 已打开，直接转发给 sidepanel（extension page）
+        try {
+          chrome.runtime.sendMessage({ type: 'SIDE_PANEL_ASK', data: payload, _relay: true });
+        } catch (e) {}
+
+        return { success: true };
+      } catch (error) {
         return { success: false, error: error.message };
       }
     

@@ -1,21 +1,11 @@
-/* Page Explainer 内容脚本样式 */
+/* WebLM 内容脚本样式（仅保留悬浮按钮 + 标注高亮） */
 
-/* 动画定义 */
 @keyframes page-explainer-pulse {
   0%, 100% {
     box-shadow: 0 0 0 0 rgba(255, 107, 107, 0.4);
   }
   50% {
     box-shadow: 0 0 0 10px rgba(255, 107, 107, 0);
-  }
-}
-
-@keyframes pe-voice-wave {
-  0%, 100% {
-    transform: scaleY(0.5);
-  }
-  50% {
-    transform: scaleY(1);
   }
 }
 
@@ -29,96 +19,6 @@
     transform: translateY(0);
   }
 }
-
-@keyframes pe-typing {
-  0%, 100% {
-    opacity: 0.3;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
-/* 主面板 */
-/* 侧边栏 */
-#page-explainer-panel {
-  position: fixed;
-  right: 0;
-  top: 0;
-  height: 100vh;
-  width: 420px;
-  max-width: 100%;
-  background: transparent; /* make container transparent so corners outside white inner are transparent */
-  border-radius: 0 0 0 12px;
-  box-shadow: -6px 0 40px rgba(0, 0, 0, 0.15);
-  z-index: 2147483647;
-  display: flex;
-  flex-direction: column;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-  font-size: 14px;
-  color: #333;
-  transform: translateX(100%);
-  transition: transform 240ms cubic-bezier(.2,.8,.2,1);
-  overflow: hidden;
-}
-
-#page-explainer-panel.pe-open {
-  transform: translateX(0);
-}
-
-#page-explainer-panel.pe-minimized {
-  max-height: 50px;
-}
-
-#page-explainer-panel.pe-minimized .pe-panel-body {
-  display: none;
-}
-
-/* 面板头部 */
-.pe-panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  cursor: move;
-  user-select: none;
-  border-radius: 16px 16px 0 0;
-  position: relative;
-  z-index: 3;
-}
-
-.pe-panel-title {
-  font-weight: 600;
-  font-size: 15px;
-}
-
-.pe-panel-controls {
-  display: flex;
-  gap: 4px;
-}
-
-/* 面板主体 */
-.pe-inner {
-  background: #ffffff;
-  border-radius: 12px; /* round corners of inner white box */
-  margin: 56px 12px 12px 12px; /* margin-top equals header height to avoid overlap */
-  position: relative;
-  height: calc(100vh - 24px);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  z-index: 2;
-}
-
-.pe-panel-body {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  padding: 18px;
-  gap: 12px;
 }
 
 /* 聊天容器 */
@@ -349,19 +249,6 @@
   animation: pe-typing 1s infinite;
 }
 
-/* 语音指示器 */
-.pe-voice-indicator {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 12px;
-  background: #fff3cd;
-  border-radius: 12px;
-  color: #856404;
-  font-size: 13px;
-}
-
 /* 悬浮按钮 */
 #pe-floating-btn {
   position: fixed;
@@ -392,40 +279,6 @@
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.35);
-  z-index: 2147483646;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 160ms ease;
-}
-
-#pe-overlay.pe-visible { opacity: 1; pointer-events: auto; }
-
-.pe-voice-waves {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  height: 20px;
-}
-
-.pe-voice-waves span {
-  width: 4px;
-  height: 100%;
-  background: #856404;
-  border-radius: 2px;
-  animation: pe-voice-wave 0.5s ease-in-out infinite;
-}
-
-.pe-voice-waves span:nth-child(1) { animation-delay: 0s; }
-.pe-voice-waves span:nth-child(2) { animation-delay: 0.1s; }
-.pe-voice-waves span:nth-child(3) { animation-delay: 0.2s; }
-.pe-voice-waves span:nth-child(4) { animation-delay: 0.3s; }
-.pe-voice-waves span:nth-child(5) { animation-delay: 0.4s; }
-
-/* 高亮标注 */
-.page-explainer-highlight {
-  transition: all 0.3s ease;
-}
-
 .page-explainer-label {
   animation: pe-fade-in 0.3s ease-out;
 }
@@ -434,56 +287,5 @@
 @media (max-width: 480px) {
   #page-explainer-panel {
     width: calc(100% - 20px);
-    right: 10px;
-    bottom: 10px;
-    max-height: 70vh;
-  }
-  
-  .pe-action-buttons {
-    flex-direction: column;
-  }
-  
-  .pe-btn {
-    width: 100%;
-  }
-}
-
-/* 暗色主题支持 */
-@media (prefers-color-scheme: dark) {
-  #page-explainer-panel {
-    background: #1e1e1e;
-    color: #e0e0e0;
-  }
-  
-  .pe-message-assistant .pe-message-content {
-    background: #2d2d2d;
-    color: #e0e0e0;
-  }
-  
-  .pe-input {
-    background: #2d2d2d;
-    border-color: #404040;
-    color: #e0e0e0;
-  }
-  
-  .pe-input:focus {
-    border-color: #667eea;
-  }
-  
-  .pe-btn {
-    background: #2d2d2d;
-    color: #e0e0e0;
-  }
-  
-  .pe-btn:hover {
-    background: #3d3d3d;
-  }
-  
-  .pe-messages::-webkit-scrollbar-track {
-    background: #2d2d2d;
-  }
-  
-  .pe-messages::-webkit-scrollbar-thumb {
-    background: #555;
   }
 }

@@ -7,12 +7,8 @@
 let annotationService = null;
 let autoScrollService = null;
 let voiceService = null;
-let panelUI = null;
 let isInitialized = false;
-// 输入历史（最近10条）
-let inputHistory = [];
-let historyIndex = -1; // -1 表示未浏览
-let tempInput = '';
+let floatingButton = null;
 
 // 初始化
 function init() {
@@ -25,8 +21,8 @@ function init() {
   autoScrollService = new AutoScrollService();
   voiceService = new VoiceService();
 
-  // 创建浮动面板
-  createPanel();
+  // 仅创建悬浮按钮（UI 统一使用 Side Panel）
+  createFloatingButton();
 
   // 监听来自 background 的消息
   chrome.runtime.onMessage.addListener(handleMessage);
@@ -41,58 +37,24 @@ function init() {
   console.log('Page Explainer Content Script 已初始化');
 }
 
-// 创建浮动面板
-function createPanel() {
-  // 创建面板容器
-  const panel = document.createElement('div');
-  panel.id = 'page-explainer-panel';
-  panel.innerHTML = `
-    <div class="pe-panel-header">
-      <div class="pe-panel-controls">
-        <button class="pe-btn pe-btn-icon pe-minimize-btn" title="最小化">−</button>
-        <button class="pe-btn pe-btn-icon pe-close-btn" title="关闭">×</button>
-      </div>
-    </div>
-    <div class="pe-inner">
-      <div class="pe-panel-body">
-      <div class="pe-chat-container">
-        <div class="pe-messages" id="pe-messages">
-          <div class="pe-message pe-message-assistant">
-            <div class="pe-message-content">
-              你好！我是 WebLMddd。我可以帮你理解当前页面的内容，回答你的问题，还能用语音和你交流。点击下方按钮开始吧！
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-      <div class="pe-input-container">
-        <input type="text" class="pe-input" id="pe-input" placeholder="输入你的问题..." />
-        <button class="pe-btn pe-input-voice" id="pe-input-voice-btn" title="语音输入">🎤</button>
-        <button class="pe-btn pe-btn-primary pe-send-btn" id="pe-send-btn">发送</button>
-      </div>
-      <div class="pe-voice-indicator" id="pe-voice-indicator" style="display: none;">
-        <div class="pe-voice-waves">
-          <span></span><span></span><span></span><span></span><span></span>
-        </div>
-        <span>正在听...</span>
-      </div>
-    </div>
-  `;
+// 创建悬浮按钮（打开 Side Panel）
+function createFloatingButton() {
+  // 避免重复创建
+  const existing = document.getElementById('pe-floating-btn');
+  if (existing) {
+    floatingButton = existing;
+    return;
+  }
 
-  document.body.appendChild(panel);
-  panel.style.display = 'none';
-  // 创建遮罩
-  const overlay = document.createElement('div');
-  overlay.id = 'pe-overlay';
-  document.body.appendChild(overlay);
-
-  // 创建悬浮按钮
   const floating = document.createElement('button');
   floating.id = 'pe-floating-btn';
-  floating.setAttribute('aria-label', '打开/关闭 WebLM 边栏');
+  floating.setAttribute('aria-label', '打开 WebLM Side Panel');
   floating.innerHTML = '🤖';
   document.body.appendChild(floating);
-  panelUI = panel;
+  floatingButton = floating;
+
+  // 视口变化（例如打开/关闭 DevTools、窗口缩放）时，确保按钮仍在可视区域内
+  attachFloatingButtonViewportGuards(floating);
 
   // 恢复悬浮按钮位置（如果已保存）
   try {
@@ -103,147 +65,68 @@ function createPanel() {
         floating.style.top = pos.top + 'px';
         floating.style.right = 'auto';
         floating.style.bottom = 'auto';
+
+        // 还原后立刻回弹一次（避免位置超出视口）
+        clampFloatingButtonToViewport(floating, { save: false });
       }
     });
   } catch (e) {}
 
   // 使悬浮按钮可拖动
   makeFloatingDraggable(floating);
-
-  // 绑定事件
-  bindPanelEvents();
-
-  // 使面板可拖动
-  makeDraggable(panel);
 }
 
-// 绑定面板事件
-function bindPanelEvents() {
-  const panel = document.getElementById('page-explainer-panel');
-  const messagesContainer = document.getElementById('pe-messages');
-  const input = document.getElementById('pe-input');
-  const sendBtn = document.getElementById('pe-send-btn');
-  // Removed explain and scroll buttons from UI
-  const inputVoiceBtn = document.getElementById('pe-input-voice-btn');
-  const minimizeBtn = panel.querySelector('.pe-minimize-btn');
-  const closeBtn = panel.querySelector('.pe-close-btn');
-  const voiceIndicator = document.getElementById('pe-voice-indicator');
-  const overlay = document.getElementById('pe-overlay');
-  const floatingBtn = document.getElementById('pe-floating-btn');
+function attachFloatingButtonViewportGuards(btn) {
+  if (!btn || btn.__peViewportGuardAttached) return;
+  btn.__peViewportGuardAttached = true;
 
-  // 发送消息
-  const sendMessage = async () => {
-    const text = input.value.trim();
-    if (!text) return;
-
-    // 保存到历史（最新在前），避免重复连续相同
-    if (!inputHistory.length || inputHistory[0] !== text) {
-      inputHistory.unshift(text);
-      if (inputHistory.length > 10) inputHistory.pop();
-    }
-    historyIndex = -1;
-    tempInput = '';
-
-    input.value = '';
-    addMessage(text, 'user');
-    
-    await askQuestion(text);
+  const onViewportChange = () => {
+    // 只对“手动拖拽过（使用 left/top）”的按钮回弹；默认 right/bottom 不干预
+    clampFloatingButtonToViewport(btn, { save: true });
   };
 
-  sendBtn.addEventListener('click', sendMessage);
-  input.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') sendMessage();
-  });
-  input.addEventListener('keydown', (e) => {
-    // 只有当没有组合按键（如 Ctrl/Cmd）时才处理
-    if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
-
-    if (e.key === 'ArrowUp') {
-      if (inputHistory.length === 0) return;
-      if (historyIndex === -1) tempInput = input.value;
-      historyIndex = Math.min(inputHistory.length - 1, historyIndex + 1);
-      input.value = inputHistory[historyIndex] || '';
-      e.preventDefault();
-    } else if (e.key === 'ArrowDown') {
-      if (inputHistory.length === 0) return;
-      if (historyIndex === -1) return;
-      historyIndex = historyIndex - 1;
-      if (historyIndex === -1) {
-        input.value = tempInput;
-      } else {
-        input.value = inputHistory[historyIndex] || '';
-      }
-      e.preventDefault();
-    }
-  });
-
-  // 讲解页面
-  // explain button removed
-
-  // 自动翻页
-  let isAutoScrolling = false;
-  // scroll button removed
-
-  // 新建对话
-  const newConvBtn = document.getElementById('pe-new-conv-btn');
-  if (newConvBtn) {
-    newConvBtn.addEventListener('click', async () => {
-      const confirmed = confirm('确定要新建对话吗？这将清空当前聊天记录并重置会话。');
-      if (!confirmed) return;
-      newConversation();
-    });
+  window.addEventListener('resize', onViewportChange);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', onViewportChange);
+    window.visualViewport.addEventListener('scroll', onViewportChange);
   }
+}
 
-  // 语音输入
-  voiceService.onStart = () => {
-    if (inputVoiceBtn) inputVoiceBtn.classList.add('pe-active');
-    voiceIndicator.style.display = 'flex';
-  };
+function clampFloatingButtonToViewport(btn, { save } = { save: false }) {
+  if (!btn) return;
 
-  voiceService.onEnd = () => {
-    if (inputVoiceBtn) inputVoiceBtn.classList.remove('pe-active');
-    voiceIndicator.style.display = 'none';
-  };
+  // 未设置 left/top 的情况使用 right/bottom 固定定位即可（无需处理）
+  const hasExplicitLeft = btn.style.left && btn.style.left !== 'auto';
+  const hasExplicitTop = btn.style.top && btn.style.top !== 'auto';
+  if (!hasExplicitLeft || !hasExplicitTop) return;
 
-  voiceService.onResult = async (result) => {
-    if (result.isFinal && result.final) {
-      input.value = result.final;
-      addMessage(result.final, 'user');
-      await askQuestion(result.final);
-    } else if (result.interim) {
-      input.value = result.interim;
-    }
-  };
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
 
-  voiceService.onError = (error) => {
-    console.error('语音识别错误:', error);
-    addMessage('语音识别失败: ' + error, 'system');
-  };
+  const rect = btn.getBoundingClientRect();
+  const btnW = btn.offsetWidth || rect.width;
+  const btnH = btn.offsetHeight || rect.height;
 
-  if (inputVoiceBtn) {
-    inputVoiceBtn.addEventListener('click', () => {
-      voiceService.toggleListening();
-    });
+  let left = parseFloat(btn.style.left);
+  let top = parseFloat(btn.style.top);
+  if (Number.isNaN(left)) left = rect.left;
+  if (Number.isNaN(top)) top = rect.top;
+
+  const clampedLeft = Math.max(0, Math.min(vw - btnW, left));
+  const clampedTop = Math.max(0, Math.min(vh - btnH, top));
+
+  if (Math.abs(clampedLeft - left) < 0.5 && Math.abs(clampedTop - top) < 0.5) return;
+
+  btn.style.left = clampedLeft + 'px';
+  btn.style.top = clampedTop + 'px';
+  btn.style.right = 'auto';
+  btn.style.bottom = 'auto';
+
+  if (save) {
+    try {
+      chrome.storage.local.set({ floatingButtonPosition: { left: Math.round(clampedLeft), top: Math.round(clampedTop) } });
+    } catch (e) {}
   }
-
-  // 最小化
-  minimizeBtn.addEventListener('click', () => {
-    panel.classList.toggle('pe-minimized');
-    minimizeBtn.textContent = panel.classList.contains('pe-minimized') ? '+' : '−';
-  });
-
-  // 关闭（使用统一函数）
-  closeBtn.addEventListener('click', () => {
-    closeSidebar();
-    annotationService.clear();
-  });
-
-  // 点击遮罩关闭
-  overlay?.addEventListener('click', () => {
-    closeSidebar();
-  });
-
-  // 点击/拖动逻辑通过 pointer 事件处理，移除额外的 click 监听以避免拖动后误触发打开
 }
 
 // 悬浮按钮拖动实现（使用 pointer events）
@@ -297,20 +180,16 @@ function makeFloatingDraggable(btn) {
         const top = parseInt(btn.style.top || btn.getBoundingClientRect().top, 10);
         chrome.storage.local.set({ floatingButtonPosition: { left, top } });
       } catch (err) {}
+
+      // 拖拽结束后回弹一次，避免贴边后在视口变化时跑出屏幕
+      clampFloatingButtonToViewport(btn, { save: true });
     } else {
-      // 隐藏悬浮按钮以避免视觉闪烁
-      btn.style.display = 'none';
       // 不是拖动，视为点击（触发打开侧边栏）
       try {
         const response = await chrome.runtime.sendMessage({ type: 'OPEN_SIDE_PANEL', source: 'content_script' });
-        if (!response?.success) {
-          // 如果需要用户手势，则告知用户通过扩展图标打开
-          if (response?.error === 'needs_user_gesture') {
-            // 恢复按钮显示
-            btn.style.display = 'flex';
-            // 可考虑显示 tooltip 或提示，这里暂时使用 alert
-            // alert('请点击扩展图标以打开侧边栏');
-          }
+        // 仅在确认 Side Panel 打开成功后隐藏
+        if (response?.success) {
+          btn.style.display = 'none';
         }
       } catch (err) {
         // 忽略
@@ -325,167 +204,6 @@ function makeFloatingDraggable(btn) {
     btn.classList.remove('pe-dragging');
     pointerId = null;
   });
-}
-
-function toggleSidebar() {
-  const panel = document.getElementById('page-explainer-panel');
-  const overlay = document.getElementById('pe-overlay');
-  if (!panel) return;
-  const isOpen = panel.classList.toggle('pe-open');
-  if (isOpen) {
-    overlay.classList.add('pe-visible');
-    panel.style.display = 'flex';
-    // set focus to input
-    setTimeout(() => {
-      const inp = document.getElementById('pe-input');
-      if (inp) inp.focus();
-    }, 300);
-  } else {
-    overlay.classList.remove('pe-visible');
-    // 延迟隐藏以便动画
-    setTimeout(() => { panel.style.display = 'none'; }, 240);
-  }
-}
-
-function closeSidebar() {
-  const panel = document.getElementById('page-explainer-panel');
-  const overlay = document.getElementById('pe-overlay');
-  if (!panel) return;
-  panel.classList.remove('pe-open');
-  overlay.classList.remove('pe-visible');
-  setTimeout(() => { panel.style.display = 'none'; }, 240);
-}
-
-// Escape 键关闭侧栏
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') {
-    const panel = document.getElementById('page-explainer-panel');
-    if (panel && panel.classList.contains('pe-open')) {
-      closeSidebar();
-    }
-  }
-});
-
-// 添加消息到聊天
-function addMessage(content, type) {
-  const messagesContainer = document.getElementById('pe-messages');
-  const messageDiv = document.createElement('div');
-  messageDiv.className = `pe-message pe-message-${type}`;
-  messageDiv.innerHTML = `<div class="pe-message-content">${escapeHtml(content)}</div>`;
-  messagesContainer.appendChild(messageDiv);
-  messagesContainer.scrollTop = messagesContainer.scrollHeight;
-  return messageDiv;
-}
-
-// 更新消息内容
-function updateMessage(messageDiv, content) {
-  const contentDiv = messageDiv.querySelector('.pe-message-content');
-  if (contentDiv) {
-    contentDiv.innerHTML = formatMarkdown(content);
-  }
-}
-
-// 讲解页面
-async function explainPage() {
-  const loadingMessage = addMessage('正在分析页面...', 'assistant');
-
-  try {
-    // 获取截图
-    const screenshot = await captureScreenshot();
-    
-    // 获取页面文本
-    const pageText = getPageText();
-    
-    // 获取页面信息
-    const pageInfo = {
-      url: window.location.href,
-      title: document.title,
-      text: pageText,
-      screenshot: screenshot,
-      ...autoScrollService.getPageInfo()
-    };
-
-    // 发送到后台处理
-    const response = await chrome.runtime.sendMessage({
-      type: 'ANALYZE_PAGE',
-      data: {
-        screenshot: screenshot,
-        pageText: pageText,
-        question: '请讲解这个页面的主要内容'
-      }
-    });
-
-    if (response.success) {
-      let text = response.response;
-      // 当背景返回提示时（例如重试后移除图片），它会添加一个警告前缀
-      const warningPrefix = '⚠️ 注意：';
-      if (typeof text === 'string' && text.startsWith(warningPrefix)) {
-        const [warningLine, ...rest] = text.split('\n');
-        addMessage(warningLine, 'system');
-        text = rest.join('\n').trim();
-      }
-
-      updateMessage(loadingMessage, text);
-      
-      // 语音播报
-      if (voiceService.synthesis) {
-        await voiceService.speak(text, { rate: 1.0 });
-      }
-    } else {
-      updateMessage(loadingMessage, '分析失败: ' + response.error);
-    }
-  } catch (error) {
-    console.error('讲解页面失败:', error);
-    updateMessage(loadingMessage, '讲解失败: ' + error.message);
-  }
-}
-
-// 提问
-async function askQuestion(question) {
-  const loadingMessage = addMessage('正在思考...', 'assistant');
-
-  try {
-    // 获取截图
-    const screenshot = await captureScreenshot();
-    
-    // 获取页面文本
-    const pageText = getPageText();
-
-    // 发送到后台处理
-    const response = await chrome.runtime.sendMessage({
-      type: 'ANALYZE_PAGE',
-      data: {
-        screenshot: screenshot,
-        pageText: pageText,
-        question: question
-      }
-    });
-
-    if (response.success) {
-      let text = response.response;
-      const warningPrefix = '⚠️ 注意：';
-      if (typeof text === 'string' && text.startsWith(warningPrefix)) {
-        const [warningLine, ...rest] = text.split('\n');
-        addMessage(warningLine, 'system');
-        text = rest.join('\n').trim();
-      }
-
-      updateMessage(loadingMessage, text);
-      
-      // 检查是否有标注指令
-      await handleAnnotations(text);
-      
-      // 语音播报
-      if (voiceService.synthesis) {
-        await voiceService.speak(text, { rate: 1.0 });
-      }
-    } else {
-      updateMessage(loadingMessage, '回答失败: ' + response.error);
-    }
-  } catch (error) {
-    console.error('提问失败:', error);
-    updateMessage(loadingMessage, '回答失败: ' + error.message);
-  }
 }
 
 // 处理标注
@@ -625,47 +343,51 @@ function handleAnnotationEvent(event) {
   });
 }
 
-// 新建对话：清空UI聊天记录并重置历史
-async function newConversation() {
-  // 清空消息区，但保留系统欢迎语
-  const messagesContainer = document.getElementById('pe-messages');
-  messagesContainer.innerHTML = '';
-  const intro = document.createElement('div');
-  intro.className = 'pe-message pe-message-assistant';
-  intro.innerHTML = `<div class="pe-message-content">你好！我是 WebLM。我可以帮你理解当前页面的内容，回答你的问题，还能用语音和你交流。点击下方按钮开始吧！</div>`;
-  messagesContainer.appendChild(intro);
-
-  // 重置本地历史
-  inputHistory = [];
-  historyIndex = -1;
-  tempInput = '';
-
-  // 通知 background 清理会话/缓存
-  try {
-    await chrome.runtime.sendMessage({ type: 'RESET_AGENT' });
-  } catch (e) {
-    console.warn('通知 background 重置会话失败:', e);
-  }
-}
-
 // 处理来自 background 的消息
 function handleMessage(message, sender, sendResponse) {
   const { type, data } = message;
 
   switch (type) {
     case 'EXPLAIN_SELECTION':
-      // 处理选中文本讲解
-      askQuestion(`请解释这段内容: ${data || message.text}`);
+      // 右键菜单触发：统一打开 Side Panel 并把问题交给 Side Panel 展示/执行
+      (async () => {
+        try {
+          await chrome.runtime.sendMessage({ type: 'OPEN_SIDE_PANEL', source: 'content_script' });
+        } catch (e) {}
+
+        const selectionText = (data || message.text || '').toString();
+        const question = `请解释这段内容: ${selectionText}`;
+        try {
+          await chrome.runtime.sendMessage({ type: 'SIDE_PANEL_ASK', data: { question } });
+        } catch (e) {}
+      })();
       break;
     
     case 'EXPLAIN_PAGE':
-      explainPage();
+      (async () => {
+        try {
+          await chrome.runtime.sendMessage({ type: 'OPEN_SIDE_PANEL', source: 'content_script' });
+        } catch (e) {}
+        try {
+          await chrome.runtime.sendMessage({ type: 'SIDE_PANEL_ASK', data: { question: '请讲解这个页面的主要内容' } });
+        } catch (e) {}
+      })();
       break;
     
     case 'GET_PAGE_TEXT':
       // 返回页面文本给 Side Panel
       sendResponse(getPageText());
       return true;
+
+    case 'HANDLE_ANNOTATIONS':
+      // Side Panel 收到回复后，可让 content script 负责解析并高亮标注
+      (async () => {
+        try {
+          const text = data?.text || data || message.text || '';
+          await handleAnnotations(text);
+        } catch (e) {}
+      })();
+      break;
     
     case 'START_AUTO_SCROLL':
       autoScrollService.startAutoScroll({
@@ -701,111 +423,22 @@ function handleMessage(message, sender, sendResponse) {
     case 'COMMAND':
       handleCommand(message.command);
       break;
-    
-    case 'SHOW_PANEL':
-      showPanel();
-      break;
-    
-    case 'HIDE_PANEL':
-      hidePanel();
-      break;
   }
 }
 
 // 处理快捷键命令
 function handleCommand(command) {
   switch (command) {
-    case 'toggle-panel':
-      togglePanel();
-      break;
     case 'start-voice':
       voiceService.startListening();
       break;
     case 'explain-page':
-      explainPage();
+      try {
+        chrome.runtime.sendMessage({ type: 'OPEN_SIDE_PANEL', source: 'content_script' });
+        chrome.runtime.sendMessage({ type: 'SIDE_PANEL_ASK', data: { question: '请讲解这个页面的主要内容' } });
+      } catch (e) {}
       break;
   }
-}
-
-// 显示面板
-function showPanel() {
-  const panel = document.getElementById('page-explainer-panel');
-  if (panel) {
-    panel.style.display = 'flex';
-  }
-}
-
-// 隐藏面板
-function hidePanel() {
-  const panel = document.getElementById('page-explainer-panel');
-  if (panel) {
-    panel.style.display = 'none';
-  }
-}
-
-// 切换面板
-function togglePanel() {
-  const panel = document.getElementById('page-explainer-panel');
-  if (panel) {
-    panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
-  }
-}
-
-// 使元素可拖动
-function makeDraggable(element) {
-  const header = element.querySelector('.pe-panel-header');
-  let isDragging = false;
-  let startX, startY, startLeft, startTop;
-
-  header.addEventListener('mousedown', (e) => {
-    if (e.target.closest('button')) return;
-    
-    isDragging = true;
-    startX = e.clientX;
-    startY = e.clientY;
-    
-    const rect = element.getBoundingClientRect();
-    startLeft = rect.left;
-    startTop = rect.top;
-    
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
-  });
-
-  function onMouseMove(e) {
-    if (!isDragging) return;
-    
-    const dx = e.clientX - startX;
-    const dy = e.clientY - startY;
-    
-    element.style.left = `${startLeft + dx}px`;
-    element.style.top = `${startTop + dy}px`;
-    element.style.right = 'auto';
-    element.style.bottom = 'auto';
-  }
-
-  function onMouseUp() {
-    isDragging = false;
-    document.removeEventListener('mousemove', onMouseMove);
-    document.removeEventListener('mouseup', onMouseUp);
-  }
-}
-
-// 转义 HTML
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
-
-// 简单的 Markdown 格式化
-function formatMarkdown(text) {
-  return text
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/`(.+?)`/g, '<code>$1</code>')
-    .replace(/\n/g, '<br>')
-    .replace(/\[标注[:：]([^\]]+)\]/g, '<span class="pe-annotation-tag">📌 $1</span>');
 }
 
 // 监听 Side Panel 状态
