@@ -12,7 +12,6 @@
     <header class="sp-header">
       <!-- header title removed per request (logo + title) -->
       <div class="sp-header-controls">
-        <button class="sp-btn sp-btn-icon" id="sp-settings-btn" title="设置">⚙️</button>
         <button class="sp-btn sp-btn-icon" id="sp-new-conv-btn" title="新建对话">🆕</button>
       </div>
     </header>
@@ -51,118 +50,6 @@
       </div>
     </div>
 
-    <!-- 设置界面 -->
-    <div class="sp-settings-view" id="sp-settings-view" style="display: none;">
-      <div class="sp-settings-header">
-        <button class="sp-btn sp-btn-icon" id="sp-back-btn">←</button>
-        <h2>设置</h2>
-      </div>
-
-      <div class="sp-settings-content">
-        <!-- 模型配置 -->
-        <section class="sp-settings-section">
-          <h3>模型配置</h3>
-          
-          <div class="sp-form-group">
-            <label for="sp-model-type">选择模型</label>
-            <select id="sp-model-type" class="sp-form-select">
-              <option value="openai">OpenAI (GPT-4o)</option>
-              <option value="claude">Anthropic (Claude)</option>
-              <option value="qwen">阿里云 (千问VL)</option>
-              <option value="doubao">火山引擎 (豆包)</option>
-              <option value="gemini">Google (Gemini)</option>
-              <option value="custom">自定义</option>
-            </select>
-          </div>
-
-          <div class="sp-form-group">
-            <label for="sp-api-key">API Key</label>
-            <div class="sp-input-wrapper">
-              <input 
-                type="password" 
-                id="sp-api-key" 
-                class="sp-form-input" 
-                placeholder="输入你的 API Key"
-              />
-              <button class="sp-toggle-password" id="sp-toggle-api-key">👁️</button>
-            </div>
-          </div>
-
-          <div class="sp-form-group" id="sp-base-url-group" style="display: none;">
-            <label for="sp-base-url">API Base URL</label>
-            <input 
-              type="text" 
-              id="sp-base-url" 
-              class="sp-form-input" 
-              placeholder="https://api.example.com/v1"
-            />
-          </div>
-
-          <div class="sp-form-group" id="sp-model-name-group" style="display: none;">
-            <label for="sp-model-name">模型名称 / 推理接入点</label>
-            <input 
-              type="text" 
-              id="sp-model-name" 
-              class="sp-form-input" 
-              placeholder="例如: gpt-4o"
-            />
-            <small class="sp-form-hint" id="sp-model-hint"></small>
-          </div>
-
-          <button class="sp-btn sp-btn-primary sp-save-btn" id="sp-save-settings">
-            保存配置
-          </button>
-          <div class="sp-save-status" id="sp-save-status"></div>
-        </section>
-
-        <!-- 语音设置 -->
-        <section class="sp-settings-section">
-          <h3>语音设置</h3>
-          
-          <div class="sp-form-group">
-            <label for="sp-voice-select">语音选择</label>
-            <select id="sp-voice-select" class="sp-form-select">
-              <option value="">默认语音</option>
-            </select>
-          </div>
-
-          <div class="sp-form-group">
-            <label for="sp-voice-rate">
-              语速: <span id="sp-rate-value">1.0</span>
-            </label>
-            <input 
-              type="range" 
-              id="sp-voice-rate" 
-              class="sp-form-range" 
-              min="0.5" 
-              max="2" 
-              step="0.1" 
-              value="1"
-            />
-          </div>
-
-          <div class="sp-form-group">
-            <label class="sp-checkbox-label">
-              <input type="checkbox" id="sp-auto-speak" checked />
-              自动播报AI回复
-            </label>
-          </div>
-        </section>
-
-        <!-- 关于 -->
-        <section class="sp-settings-section">
-          <h3>关于</h3>
-          <div class="sp-about">
-            <p class="sp-version">版本 1.0.0</p>
-            <p class="sp-description">AI驱动的网页内容讲解助手</p>
-            <div class="sp-links">
-              <a href="https://github.com" target="_blank" class="sp-link">📚 文档</a>
-              <a href="https://github.com" target="_blank" class="sp-link">⭐ GitHub</a>
-            </div>
-          </div>
-        </section>
-      </div>
-    </div>
   </div>
 
   <script src="sidepanel.js"></script>

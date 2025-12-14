@@ -263,199 +263,7 @@ body {
 }
 
 /* 设置视图 */
-.sp-settings-view {
-  display: flex;
-  flex-direction: column;
-  height: calc(100vh - 65px);
-  background: white;
-}
 
-.sp-settings-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 16px;
-  border-bottom: 1px solid #e0e0e0;
-}
-
-.sp-settings-header h2 {
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.sp-settings-header .sp-btn {
-  background: white;
-  color: #667eea;
-  border: 1px solid #e0e0e0;
-  font-size: 20px;
-  padding: 4px 12px;
-}
-
-.sp-settings-header .sp-btn:hover {
-  background: #f5f5ff;
-}
-
-.sp-settings-content {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
-}
-
-.sp-settings-section {
-  margin-bottom: 24px;
-}
-
-.sp-settings-section h3 {
-  font-size: 16px;
-  font-weight: 600;
-  margin-bottom: 16px;
-  color: #667eea;
-}
-
-/* 表单 */
-.sp-form-group {
-  margin-bottom: 16px;
-}
-
-.sp-form-group label {
-  display: block;
-  margin-bottom: 6px;
-  font-weight: 500;
-  color: #555;
-}
-
-.sp-form-select,
-.sp-form-input {
-  width: 100%;
-  padding: 10px 12px;
-  border: 1px solid #e0e0e0;
-  border-radius: 6px;
-  font-size: 14px;
-  outline: none;
-  transition: border-color 0.2s;
-}
-
-.sp-form-select:focus,
-.sp-form-input:focus {
-  border-color: #667eea;
-}
-
-.sp-input-wrapper {
-  position: relative;
-}
-
-.sp-input-wrapper .sp-form-input {
-  padding-right: 40px;
-}
-
-.sp-toggle-password {
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 16px;
-  padding: 4px 8px;
-}
-
-.sp-form-hint {
-  display: block;
-  margin-top: 4px;
-  font-size: 12px;
-  color: #888;
-}
-
-.sp-form-range {
-  width: 100%;
-}
-
-.sp-checkbox-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-}
-
-.sp-checkbox-label input[type="checkbox"] {
-  width: 18px;
-  height: 18px;
-  cursor: pointer;
-}
-
-.sp-save-btn {
-  width: 100%;
-  padding: 12px;
-  background: #667eea;
-  color: white;
-  border: none;
-  border-radius: 8px;
-  font-size: 15px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.sp-save-btn:hover {
-  background: #5568d3;
-}
-
-.sp-save-status {
-  margin-top: 8px;
-  padding: 8px 12px;
-  border-radius: 6px;
-  font-size: 13px;
-  text-align: center;
-  background: #e8f5e9;
-  color: #2e7d32;
-}
-
-.sp-save-status.error {
-  background: #ffebee;
-  color: #c62828;
-}
-
-.sp-save-status:empty {
-  display: none;
-}
-
-/* 关于 */
-.sp-about {
-  padding: 12px;
-  background: #f5f5f5;
-  border-radius: 8px;
-}
-
-.sp-version {
-  font-size: 13px;
-  color: #888;
-  margin-bottom: 8px;
-}
-
-.sp-description {
-  font-size: 14px;
-  color: #555;
-  line-height: 1.6;
-  margin-bottom: 12px;
-}
-
-.sp-links {
-  display: flex;
-  gap: 12px;
-}
-
-.sp-link {
-  color: #667eea;
-  text-decoration: none;
-  font-size: 14px;
-  transition: color 0.2s;
-}
-
-.sp-link:hover {
-  color: #5568d3;
-  text-decoration: underline;
-}
 
 /* 动画 */
 @keyframes sp-fade-in {
@@ -479,23 +287,19 @@ body {
 }
 
 /* 滚动条 */
-.sp-messages::-webkit-scrollbar,
-.sp-settings-content::-webkit-scrollbar {
+.sp-messages::-webkit-scrollbar {
   width: 8px;
 }
 
-.sp-messages::-webkit-scrollbar-track,
-.sp-settings-content::-webkit-scrollbar-track {
+.sp-messages::-webkit-scrollbar-track {
   background: #f0f0f0;
 }
 
-.sp-messages::-webkit-scrollbar-thumb,
-.sp-settings-content::-webkit-scrollbar-thumb {
+.sp-messages::-webkit-scrollbar-thumb {
   background: #c0c0c0;
   border-radius: 4px;
 }
 
-.sp-messages::-webkit-scrollbar-thumb:hover,
-.sp-settings-content::-webkit-scrollbar-thumb:hover {
+.sp-messages::-webkit-scrollbar-thumb:hover {
   background: #a0a0a0;
 }
