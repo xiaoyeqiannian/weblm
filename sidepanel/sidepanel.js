@@ -11,6 +11,10 @@ let tempInput = '';
 let isAutoScrolling = false;
 let isVoiceRecording = false;
 
+// 朗读/解读状态
+let ttsState = 'idle'; // idle | loading | playing | paused
+let currentExplainMessageDiv = null;
+
 // DOM 元素
 let elements = {};
 
@@ -36,7 +40,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 消息
     messages: document.getElementById('sp-messages'),
     input: document.getElementById('sp-input'),
-    sendBtn: document.getElementById('sp-send-btn'),
+    playBtn: document.getElementById('sp-play-btn'),
+    playIconUse: document.getElementById('sp-play-icon-use'),
     
     // 操作按钮
     // explainBtn & scrollBtn removed from UI
@@ -48,6 +53,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // 绑定事件
   bindEvents();
+
+  // 初始化播放按钮 UI
+  setPlayButtonUI(ttsState);
 
   // 接收来自 content/background 的外部消息（例如右键菜单触发的提问）
   initExternalMessageHandlers();
@@ -118,7 +126,7 @@ function handleVoiceResult(text) {
 
     // 结束录音态 UI
     elements.voiceIndicator.style.display = 'none';
-    if (elements.inputVoiceBtn) elements.inputVoiceBtn.textContent = '🎤';
+    if (elements.inputVoiceBtn) elements.inputVoiceBtn.classList.remove('sp-recording');
     isVoiceRecording = false;
   } catch (e) {
     console.warn('处理语音结果失败:', e);
@@ -172,8 +180,10 @@ function bindEvents() {
   // 新建对话
   elements.newConvBtn.addEventListener('click', () => newConversation());
   
-  // 发送消息
-  elements.sendBtn.addEventListener('click', () => sendMessage());
+  // 右侧圆形按钮：解读网页并播报（播放/暂停/继续）
+  if (elements.playBtn) elements.playBtn.addEventListener('click', () => toggleExplainSpeak());
+
+  // 发送消息（键盘 Enter）
   elements.input.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') sendMessage();
   });
@@ -186,6 +196,280 @@ function bindEvents() {
   if (elements.inputVoiceBtn) elements.inputVoiceBtn.addEventListener('click', () => toggleVoiceInput());
 }
 
+function setPlayButtonUI(state) {
+  if (!elements.playBtn) return;
+
+  const setUseHref = (useEl, href) => {
+    if (!useEl) return;
+    useEl.setAttribute('href', href);
+    try {
+      useEl.setAttributeNS('http://www.w3.org/1999/xlink', 'href', href);
+    } catch (e) {}
+  };
+
+  if (state === 'playing' || state === 'loading') {
+    setUseHref(elements.playIconUse, '#hi-pause');
+    elements.playBtn.title = '暂停';
+    elements.playBtn.setAttribute('aria-label', '暂停');
+    elements.playBtn.setAttribute('aria-pressed', 'true');
+  } else {
+    setUseHref(elements.playIconUse, '#hi-play');
+    elements.playBtn.title = '播放';
+    elements.playBtn.setAttribute('aria-label', '播放');
+    elements.playBtn.setAttribute('aria-pressed', 'false');
+  }
+
+  if (state === 'loading') {
+    elements.playBtn.setAttribute('aria-busy', 'true');
+  } else {
+    elements.playBtn.removeAttribute('aria-busy');
+  }
+}
+
+function stopExplainSpeak() {
+  if (ttsAvailable()) {
+    try {
+      window.speechSynthesis.cancel();
+    } catch (e) {}
+  }
+  ttsState = 'idle';
+  setPlayButtonUI(ttsState);
+}
+
+function ttsAvailable() {
+  return !!window.speechSynthesis && typeof SpeechSynthesisUtterance !== 'undefined';
+}
+
+async function getVoicesSafe() {
+  if (!ttsAvailable()) return [];
+  const synthesis = window.speechSynthesis;
+  let voices = synthesis.getVoices();
+  if (voices && voices.length) return voices;
+
+  voices = await new Promise((resolve) => {
+    let resolved = false;
+
+    const finish = () => {
+      if (resolved) return;
+      resolved = true;
+      try {
+        resolve(synthesis.getVoices() || []);
+      } catch (e) {
+        resolve([]);
+      }
+    };
+
+    synthesis.onvoiceschanged = finish;
+    setTimeout(finish, 800);
+  });
+
+  return voices;
+}
+
+async function getTtsOptions() {
+  try {
+    const res = await chrome.storage.local.get(['voiceRate', 'selectedVoice']);
+    const rate = Number(res.voiceRate);
+    return {
+      rate: Number.isFinite(rate) && rate > 0 ? rate : 1.0,
+      selectedVoice: typeof res.selectedVoice === 'string' ? res.selectedVoice : ''
+    };
+  } catch (e) {
+    return { rate: 1.0, selectedVoice: '' };
+  }
+}
+
+function chunkTextForTts(text, maxLen = 180) {
+  const normalized = String(text || '').trim();
+  if (!normalized) return [];
+
+  const parts = [];
+  const sentences = normalized
+    .replace(/\s+/g, ' ')
+    .split(/(?<=[。！？；.!?])\s*/g)
+    .filter(Boolean);
+
+  let buffer = '';
+  for (const s of sentences) {
+    if ((buffer + s).length <= maxLen) {
+      buffer += s;
+      continue;
+    }
+
+    if (buffer) parts.push(buffer);
+    if (s.length <= maxLen) {
+      buffer = s;
+    } else {
+      // 超长句子硬切
+      for (let i = 0; i < s.length; i += maxLen) {
+        parts.push(s.slice(i, i + maxLen));
+      }
+      buffer = '';
+    }
+  }
+  if (buffer) parts.push(buffer);
+  return parts;
+}
+
+async function speakText(text, { keepPaused = false } = {}) {
+  if (!ttsAvailable()) {
+    throw new Error('当前环境不支持语音播报');
+  }
+
+  const synthesis = window.speechSynthesis;
+  const options = await getTtsOptions();
+  const voices = await getVoicesSafe();
+  const selected = options.selectedVoice
+    ? voices.find(v => v.name === options.selectedVoice)
+    : null;
+
+  // 新一轮播放：清空队列并从头开始
+  synthesis.cancel();
+
+  const chunks = chunkTextForTts(text);
+  if (!chunks.length) return;
+
+  const utterances = chunks.map((chunk, idx) => {
+    const u = new SpeechSynthesisUtterance(chunk);
+    u.lang = 'zh-CN';
+    u.rate = options.rate;
+    if (selected) u.voice = selected;
+    if (idx === chunks.length - 1) {
+      u.onend = () => {
+        // 只有在非暂停态结束才回到 idle
+        if (!synthesis.paused) {
+          ttsState = 'idle';
+          setPlayButtonUI(ttsState);
+        }
+      };
+      u.onerror = () => {
+        ttsState = 'idle';
+        setPlayButtonUI(ttsState);
+      };
+    }
+    return u;
+  });
+
+  // 入队
+  utterances.forEach(u => synthesis.speak(u));
+
+  // 若需要保持暂停态（例如加载期间用户点了暂停），确保队列不自动开始播放
+  if (keepPaused) {
+    try {
+      synthesis.pause();
+    } catch (e) {}
+  }
+}
+
+function pauseTts() {
+  if (!ttsAvailable()) return;
+  try {
+    window.speechSynthesis.pause();
+  } catch (e) {}
+}
+
+function resumeTts() {
+  if (!ttsAvailable()) return;
+  try {
+    window.speechSynthesis.resume();
+  } catch (e) {}
+}
+
+async function analyzePageForExplanation() {
+  // 获取截图
+  const screenshotResponse = await chrome.runtime.sendMessage({ type: 'CAPTURE_VIEWPORT' });
+  if (!screenshotResponse.success) {
+    throw new Error('截图失败');
+  }
+
+  // 获取页面文本
+  const textResponse = await sendToContentScript('GET_PAGE_TEXT');
+  const pageText = textResponse || '';
+
+  // 发送分析请求
+  const response = await chrome.runtime.sendMessage({
+    type: 'ANALYZE_PAGE',
+    data: {
+      screenshot: screenshotResponse.screenshot,
+      pageText: pageText,
+      question: '请解读这个页面的主要内容，并用简洁易懂的中文说明。'
+    }
+  });
+
+  return response;
+}
+
+async function toggleExplainSpeak() {
+  // 若在播报中：点击=暂停
+  if (ttsState === 'playing') {
+    pauseTts();
+    ttsState = 'paused';
+    setPlayButtonUI(ttsState);
+    return;
+  }
+
+  // 若已暂停：点击=继续
+  if (ttsState === 'paused') {
+    resumeTts();
+    ttsState = 'playing';
+    setPlayButtonUI(ttsState);
+    return;
+  }
+
+  // 若正在加载：点击=进入暂停态（结果回来后不自动播，等恢复）
+  if (ttsState === 'loading') {
+    pauseTts();
+    ttsState = 'paused';
+    setPlayButtonUI(ttsState);
+    return;
+  }
+
+  // idle：开始解读并播报
+  ttsState = 'loading';
+  setPlayButtonUI(ttsState);
+
+  currentExplainMessageDiv = addMessage('正在解读网页...', 'assistant');
+  try {
+    const response = await analyzePageForExplanation();
+    if (response && response.success) {
+      updateMessage(currentExplainMessageDiv, response.response);
+
+      // 让 content script 解析并执行标注高亮
+      try {
+        await sendToContentScript('HANDLE_ANNOTATIONS', { text: response.response });
+      } catch (e) {}
+
+      if (!ttsAvailable()) {
+        ttsState = 'idle';
+        setPlayButtonUI(ttsState);
+        return;
+      }
+
+      // 如果用户在加载期间点了暂停，保持 paused；否则进入 playing
+      const shouldKeepPaused = ttsState === 'paused';
+      if (!shouldKeepPaused) ttsState = 'playing';
+      setPlayButtonUI(ttsState);
+
+      await speakText(response.response, { keepPaused: shouldKeepPaused });
+
+      // 若在 speakText 期间被 pause，保持状态由按钮控制
+      if (window.speechSynthesis && window.speechSynthesis.paused) {
+        ttsState = 'paused';
+        setPlayButtonUI(ttsState);
+      }
+    } else {
+      updateMessage(currentExplainMessageDiv, '解读失败: ' + (response?.error || '未知错误'));
+      ttsState = 'idle';
+      setPlayButtonUI(ttsState);
+    }
+  } catch (error) {
+    console.error('解读网页失败:', error);
+    updateMessage(currentExplainMessageDiv, '解读失败: ' + error.message);
+    ttsState = 'idle';
+    setPlayButtonUI(ttsState);
+  }
+}
+
 // 显示主视图
 function showMainView() {
   elements.mainView.style.display = 'flex';
@@ -193,6 +477,9 @@ function showMainView() {
 
 // 新建对话
 async function newConversation() {
+  // 停止任何正在进行的播报
+  stopExplainSpeak();
+
   // 清空消息
   elements.messages.innerHTML = `
     <div class="sp-message sp-message-assistant">
@@ -392,12 +679,12 @@ async function toggleVoiceInput() {
   if (isVoiceRecording) {
     await sendToContentScript('STOP_VOICE');
     elements.voiceIndicator.style.display = 'none';
-    if (elements.inputVoiceBtn) elements.inputVoiceBtn.textContent = '🎤';
+    if (elements.inputVoiceBtn) elements.inputVoiceBtn.classList.remove('sp-recording');
     isVoiceRecording = false;
   } else {
     await sendToContentScript('START_VOICE');
     elements.voiceIndicator.style.display = 'flex';
-    if (elements.inputVoiceBtn) elements.inputVoiceBtn.textContent = '🔴';
+    if (elements.inputVoiceBtn) elements.inputVoiceBtn.classList.add('sp-recording');
     isVoiceRecording = true;
   }
 }
