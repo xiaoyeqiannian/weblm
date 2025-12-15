@@ -11,6 +11,16 @@ let tempInput = '';
 let isAutoScrolling = false;
 let isVoiceRecording = false;
 
+function setVoiceIndicatorVisible(visible) {
+  if (!elements.voiceIndicator) return;
+  elements.voiceIndicator.classList.toggle('is-visible', !!visible);
+  elements.voiceIndicator.setAttribute('aria-hidden', visible ? 'false' : 'true');
+
+  if (elements.inputContainer) {
+    elements.inputContainer.classList.toggle('is-voice', !!visible);
+  }
+}
+
 // 朗读/解读状态
 let ttsState = 'idle'; // idle | loading | playing | paused
 let currentExplainMessageDiv = null;
@@ -55,7 +65,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // 语音指示器
     voiceIndicator: document.getElementById('sp-voice-indicator'),
+    voiceCancelBtn: document.getElementById('sp-voice-cancel-btn'),
+    voiceDoneBtn: document.getElementById('sp-voice-done-btn'),
+    voiceIndicatorText: document.getElementById('sp-voice-indicator-text'),
   };
+
+  // 确保初始隐藏
+  setVoiceIndicatorVisible(false);
 
   // 绑定事件
   bindEvents();
@@ -134,9 +150,12 @@ function handleVoiceResult(text) {
     askQuestion(text);
 
     // 结束录音态 UI
-    elements.voiceIndicator.style.display = 'none';
+    setVoiceIndicatorVisible(false);
     if (elements.inputVoiceBtn) elements.inputVoiceBtn.classList.remove('sp-recording');
     isVoiceRecording = false;
+
+    // 恢复输入态 UI
+    updateComposeUI();
   } catch (e) {
     console.warn('处理语音结果失败:', e);
   }
@@ -226,6 +245,18 @@ function bindEvents() {
       } else {
         await toggleVoiceInput();
       }
+    });
+  }
+
+  // 顶部“正在听取”提示：取消/完成
+  if (elements.voiceCancelBtn) {
+    elements.voiceCancelBtn.addEventListener('click', async () => {
+      if (isVoiceRecording) await toggleVoiceInput();
+    });
+  }
+  if (elements.voiceDoneBtn) {
+    elements.voiceDoneBtn.addEventListener('click', async () => {
+      if (isVoiceRecording) await toggleVoiceInput();
     });
   }
 }
@@ -772,12 +803,24 @@ async function toggleAutoScroll() {
 async function toggleVoiceInput() {
   if (isVoiceRecording) {
     await sendToContentScript('STOP_VOICE');
-    elements.voiceIndicator.style.display = 'none';
+    setVoiceIndicatorVisible(false);
     if (elements.inputVoiceBtn) elements.inputVoiceBtn.classList.remove('sp-recording');
     isVoiceRecording = false;
+
+    // 恢复输入态 UI
+    updateComposeUI();
   } else {
+    // 进入录音态：退出输入态（确保不会显示发送态）
+    try {
+      if (elements.input) elements.input.blur();
+    } catch (e) {}
+    isInputFocused = false;
+    isComposing = false;
+    applyComposeUI();
+
     await sendToContentScript('START_VOICE');
-    elements.voiceIndicator.style.display = 'flex';
+    if (elements.voiceIndicatorText) elements.voiceIndicatorText.textContent = '正在听取';
+    setVoiceIndicatorVisible(true);
     if (elements.inputVoiceBtn) elements.inputVoiceBtn.classList.add('sp-recording');
     isVoiceRecording = true;
   }

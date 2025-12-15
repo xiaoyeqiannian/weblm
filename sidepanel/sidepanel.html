@@ -63,17 +63,22 @@
             <svg class="sp-icon" aria-hidden="true"><use id="sp-right-action-icon-use" href="#hi-microphone"></use></svg>
           </button>
         </div>
+
+        <!-- 语音指示器（录音态：替换输入框） -->
+        <div class="sp-voice-indicator" id="sp-voice-indicator" aria-live="polite" aria-atomic="true" aria-hidden="true">
+          <button class="sp-voice-indicator-btn sp-voice-indicator-btn-left" id="sp-voice-cancel-btn" type="button" title="取消" aria-label="取消">×</button>
+          <div class="sp-voice-indicator-center">
+            <div class="sp-voice-indicator-glow" aria-hidden="true"></div>
+            <span class="sp-voice-indicator-text" id="sp-voice-indicator-text">正在听取</span>
+          </div>
+          <button class="sp-voice-indicator-btn sp-voice-indicator-btn-right" id="sp-voice-done-btn" type="button" title="完成" aria-label="完成">
+            <svg class="sp-icon" aria-hidden="true"><use href="#hi-paper-airplane"></use></svg>
+          </button>
+        </div>
+
         <button class="sp-play-btn" id="sp-play-btn" title="播放" aria-label="播放">
           <svg class="sp-icon" aria-hidden="true"><use id="sp-play-icon-use" href="#hi-play"></use></svg>
         </button>
-      </div>
-
-      <!-- 语音指示器 -->
-      <div class="sp-voice-indicator" id="sp-voice-indicator" style="display: none;">
-        <div class="sp-voice-waves">
-          <span></span><span></span><span></span><span></span><span></span>
-        </div>
-        <span>正在听...</span>
       </div>
     </div>
 

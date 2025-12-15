@@ -84,6 +84,7 @@ body {
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
+  position: relative;
 }
 
 /* 消息容器 */
@@ -172,6 +173,21 @@ body {
   background: #fafafa;
 }
 
+/* 录音态：用语音条替换输入行 */
+.sp-input-container.is-voice {
+  gap: 0;
+}
+
+.sp-input-container.is-voice .sp-input-pill,
+.sp-input-container.is-voice .sp-play-btn {
+  display: none;
+}
+
+.sp-input-container.is-voice .sp-voice-indicator {
+  display: flex;
+  border-color: #667eea;
+}
+
 /* 输入中：输入框占满宽度，右侧按钮变为发送 */
 .sp-input-container.is-composing {
   gap: 0;
@@ -187,9 +203,7 @@ body {
 
 .sp-input-container.is-composing .sp-input-pill {
   width: 100%;
-  padding: 10px 12px;
-  background: #f5f5ff;
-  border-color: #e0e0e0;
+  padding: 8px 10px;
 }
 
 .sp-input-container.is-composing .sp-input {
@@ -201,12 +215,12 @@ body {
 }
 
 .sp-input-container.is-composing .sp-pill-btn-right {
-  background: #fff;
-  color: #333;
+  background: transparent;
+  color: #666;
 }
 
 .sp-input-container.is-composing .sp-pill-btn-right:hover {
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(0, 0, 0, 0.06);
 }
 
 .sp-input-pill {
@@ -278,11 +292,6 @@ body {
   background: #f5f5ff;
 }
 
-.sp-input-container.is-composing .sp-input-pill:focus-within {
-  border-color: #e0e0e0;
-  background: #f5f5ff;
-}
-
 .sp-play-btn {
   width: 44px;
   height: 44px;
@@ -312,47 +321,120 @@ body {
   outline-offset: 2px;
 }
 
-/* 语音指示器 */
+/* 语音指示器（顶部“正在听取”胶囊条） */
 .sp-voice-indicator {
+  position: relative;
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: #f5f5ff;
+  border: 1px solid #e0e0e0;
+  overflow: hidden;
+  flex: 1;
+}
+
+.sp-voice-indicator.is-visible {
+  display: flex;
+}
+
+.sp-voice-indicator::before {
+  content: '';
+  position: absolute;
+  inset: -70% -60%;
+  background:
+    radial-gradient(closest-side at 18% 28%, rgba(102, 126, 234, 0.48), rgba(102, 126, 234, 0) 62%),
+    radial-gradient(closest-side at 72% 58%, rgba(255, 111, 0, 0.28), rgba(255, 111, 0, 0) 64%),
+    radial-gradient(closest-side at 40% 86%, rgba(85, 104, 211, 0.36), rgba(85, 104, 211, 0) 60%),
+    radial-gradient(closest-side at 86% 20%, rgba(102, 126, 234, 0.28), rgba(102, 126, 234, 0) 58%);
+  background-size: 200% 200%;
+  background-position: 0% 50%;
+  filter: blur(12px);
+  opacity: 0.9;
+  animation: sp-voice-cloud 8.5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.sp-voice-indicator::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.08) 28%,
+    rgba(102, 126, 234, 0.14) 50%,
+    rgba(255, 255, 255, 0.08) 72%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  transform: translateX(-75%);
+  opacity: 0.65;
+  animation: sp-voice-shimmer 4.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.sp-voice-indicator-btn {
+  position: relative;
+  z-index: 1;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  border: none;
+  background: transparent;
+  color: #666;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.sp-voice-indicator-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.sp-voice-indicator-btn:active {
+  transform: scale(0.96);
+}
+
+.sp-voice-indicator-btn-left {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.sp-voice-indicator-btn-right .sp-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.sp-voice-indicator-center {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  padding: 12px;
-  background: #fff3e0;
-  border-top: 1px solid #ffe0b2;
-  color: #e65100;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.sp-voice-indicator-glow {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #667eea;
+  opacity: 0.85;
+  box-shadow: 0 0 10px rgba(102, 126, 234, 0.35);
+  animation: sp-voice-pulse 1.9s ease-in-out infinite;
+}
+
+.sp-voice-indicator-text {
   font-size: 14px;
-}
-
-.sp-voice-waves {
-  display: flex;
-  gap: 3px;
-  align-items: center;
-}
-
-.sp-voice-waves span {
-  width: 3px;
-  height: 16px;
-  background: #ff6f00;
-  border-radius: 2px;
-  animation: sp-voice-wave 1.2s ease-in-out infinite;
-}
-
-.sp-voice-waves span:nth-child(2) {
-  animation-delay: 0.1s;
-}
-
-.sp-voice-waves span:nth-child(3) {
-  animation-delay: 0.2s;
-}
-
-.sp-voice-waves span:nth-child(4) {
-  animation-delay: 0.3s;
-}
-
-.sp-voice-waves span:nth-child(5) {
-  animation-delay: 0.4s;
+  color: #333;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* 设置视图 */
@@ -376,6 +458,41 @@ body {
   }
   50% {
     transform: scaleY(1);
+  }
+}
+
+@keyframes sp-voice-shimmer {
+  0% {
+    transform: translateX(-60%);
+  }
+  100% {
+    transform: translateX(60%);
+  }
+}
+
+@keyframes sp-voice-cloud {
+  0% {
+    background-position: 0% 50%;
+    transform: translate3d(-6%, 0, 0);
+  }
+  50% {
+    background-position: 100% 50%;
+    transform: translate3d(6%, 0, 0);
+  }
+  100% {
+    background-position: 0% 50%;
+    transform: translate3d(-6%, 0, 0);
+  }
+}
+
+@keyframes sp-voice-pulse {
+  0%, 100% {
+    transform: scale(0.92);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scale(1.12);
+    opacity: 0.95;
   }
 }
 
