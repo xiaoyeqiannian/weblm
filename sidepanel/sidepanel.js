@@ -18,6 +18,10 @@ let currentExplainMessageDiv = null;
 // DOM 元素
 let elements = {};
 
+// 输入态（输入中 => 显示发送按钮）
+let isComposing = false;
+let isInputFocused = false;
+
 // 初始化
 document.addEventListener('DOMContentLoaded', async () => {
   // 获取当前标签页
@@ -40,12 +44,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 消息
     messages: document.getElementById('sp-messages'),
     input: document.getElementById('sp-input'),
+    inputContainer: document.getElementById('sp-input-container'),
     playBtn: document.getElementById('sp-play-btn'),
     playIconUse: document.getElementById('sp-play-icon-use'),
     
     // 操作按钮
     // explainBtn & scrollBtn removed from UI
     inputVoiceBtn: document.getElementById('sp-input-voice-btn'),
+    rightActionIconUse: document.getElementById('sp-right-action-icon-use'),
     
     // 语音指示器
     voiceIndicator: document.getElementById('sp-voice-indicator'),
@@ -53,6 +59,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // 绑定事件
   bindEvents();
+
+  // 初始化输入态 UI
+  updateComposeUI();
 
   // 初始化播放按钮 UI
   setPlayButtonUI(ttsState);
@@ -187,13 +196,75 @@ function bindEvents() {
   elements.input.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') sendMessage();
   });
+
+  // 输入态切换（点击输入框开始输入时 => 发送态）
+  elements.input.addEventListener('input', updateComposeUI);
+  elements.input.addEventListener('focus', () => {
+    isInputFocused = true;
+    updateComposeUI();
+  });
+  elements.input.addEventListener('blur', () => {
+    isInputFocused = false;
+    // 离开输入框且没有内容时恢复默认态
+    if (!elements.input.value.trim()) {
+      isComposing = false;
+      applyComposeUI();
+    } else {
+      updateComposeUI();
+    }
+  });
   
   // 输入历史
   elements.input.addEventListener('keydown', handleInputHistory);
   
   // 操作按钮
   // explain & scroll removed from UI
-  if (elements.inputVoiceBtn) elements.inputVoiceBtn.addEventListener('click', () => toggleVoiceInput());
+  if (elements.inputVoiceBtn) {
+    elements.inputVoiceBtn.addEventListener('click', async () => {
+      if (isComposing) {
+        await sendMessage();
+      } else {
+        await toggleVoiceInput();
+      }
+    });
+  }
+}
+
+function setRightActionIcon(href) {
+  const useEl = elements.rightActionIconUse;
+  if (!useEl) return;
+  useEl.setAttribute('href', href);
+  try {
+    useEl.setAttributeNS('http://www.w3.org/1999/xlink', 'href', href);
+  } catch (e) {}
+}
+
+function applyComposeUI() {
+  if (!elements.inputContainer) return;
+  elements.inputContainer.classList.toggle('is-composing', isComposing);
+
+  if (!elements.inputVoiceBtn) return;
+  if (isComposing) {
+    setRightActionIcon('#hi-paper-airplane');
+    elements.inputVoiceBtn.title = '发送';
+    elements.inputVoiceBtn.setAttribute('aria-label', '发送');
+  } else {
+    setRightActionIcon('#hi-microphone');
+    elements.inputVoiceBtn.title = '语音输入';
+    elements.inputVoiceBtn.setAttribute('aria-label', '语音输入');
+  }
+}
+
+function updateComposeUI() {
+  const hasText = !!elements.input?.value?.trim();
+  const next = isInputFocused || hasText;
+  if (next === isComposing) {
+    // 仍需要保证初始 render 正确
+    applyComposeUI();
+    return;
+  }
+  isComposing = next;
+  applyComposeUI();
 }
 
 function setPlayButtonUI(state) {
@@ -517,6 +588,8 @@ async function sendMessage() {
   tempInput = '';
   
   elements.input.value = '';
+  isComposing = false;
+  applyComposeUI();
   addMessage(text, 'user');
   
   await askQuestion(text);

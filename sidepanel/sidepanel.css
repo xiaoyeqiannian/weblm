@@ -172,13 +172,50 @@ body {
   background: #fafafa;
 }
 
+/* 输入中：输入框占满宽度，右侧按钮变为发送 */
+.sp-input-container.is-composing {
+  gap: 0;
+}
+
+.sp-input-container.is-composing .sp-play-btn {
+  display: none;
+}
+
+.sp-input-container.is-composing .sp-pill-btn-left {
+  display: none;
+}
+
+.sp-input-container.is-composing .sp-input-pill {
+  width: 100%;
+  padding: 10px 12px;
+  background: #f5f5ff;
+  border-color: #e0e0e0;
+}
+
+.sp-input-container.is-composing .sp-input {
+  color: #333;
+}
+
+.sp-input-container.is-composing .sp-input::placeholder {
+  color: #888;
+}
+
+.sp-input-container.is-composing .sp-pill-btn-right {
+  background: #fff;
+  color: #333;
+}
+
+.sp-input-container.is-composing .sp-pill-btn-right:hover {
+  background: rgba(255, 255, 255, 0.92);
+}
+
 .sp-input-pill {
   flex: 1;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  background: #f0f0f0;
+  background: #f5f5ff;
   border: 1px solid #e0e0e0;
   border-radius: 999px;
 }
@@ -238,6 +275,11 @@ body {
 
 .sp-input-pill:focus-within {
   border-color: #667eea;
+  background: #f5f5ff;
+}
+
+.sp-input-container.is-composing .sp-input-pill:focus-within {
+  border-color: #e0e0e0;
   background: #f5f5ff;
 }
 
