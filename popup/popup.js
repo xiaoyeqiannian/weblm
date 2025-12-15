@@ -35,6 +35,87 @@ const MODEL_CONFIGS = {
 // DOM 元素
 let elements = {};
 
+let pendingSelectedVoice = '';
+
+const VOICE_PREVIEW_TEXT = '你好呀，让我们一起快乐的学习吧！';
+
+function ttsAvailable() {
+  return !!window.speechSynthesis && typeof SpeechSynthesisUtterance !== 'undefined';
+}
+
+async function getVoicesSafe() {
+  if (!ttsAvailable()) return [];
+  const synthesis = window.speechSynthesis;
+  let voices = synthesis.getVoices();
+  if (voices && voices.length) return voices;
+
+  voices = await new Promise((resolve) => {
+    let resolved = false;
+    const finish = () => {
+      if (resolved) return;
+      resolved = true;
+      try {
+        resolve(synthesis.getVoices() || []);
+      } catch (e) {
+        resolve([]);
+      }
+    };
+    synthesis.onvoiceschanged = finish;
+    setTimeout(finish, 800);
+  });
+
+  return voices;
+}
+
+async function playVoicePreview(voiceName) {
+  if (!ttsAvailable()) return;
+
+  const synthesis = window.speechSynthesis;
+  try {
+    synthesis.cancel();
+  } catch (e) {}
+
+  const utterance = new SpeechSynthesisUtterance(VOICE_PREVIEW_TEXT);
+  utterance.lang = 'zh-CN';
+  utterance.rate = Number(elements.voiceRate?.value) || 1.0;
+
+  const voices = await getVoicesSafe();
+  const selected = voiceName ? voices.find(v => v.name === voiceName) : null;
+  if (selected) utterance.voice = selected;
+
+  try {
+    synthesis.speak(utterance);
+  } catch (e) {
+    console.warn('[Popup] 试听播放失败:', e);
+  }
+}
+
+function playVoicePreviewSync(voiceName) {
+  if (!ttsAvailable()) return;
+
+  const synthesis = window.speechSynthesis;
+  try {
+    synthesis.cancel();
+  } catch (e) {}
+
+  const utterance = new SpeechSynthesisUtterance(VOICE_PREVIEW_TEXT);
+  utterance.lang = 'zh-CN';
+  utterance.rate = Number(elements.voiceRate?.value) || 1.0;
+
+  // 在用户手势回调内尽量同步选择 voice
+  try {
+    const voices = synthesis.getVoices() || [];
+    const selected = voiceName ? voices.find(v => v.name === voiceName) : null;
+    if (selected) utterance.voice = selected;
+  } catch (e) {}
+
+  try {
+    synthesis.speak(utterance);
+  } catch (e) {
+    console.warn('[Popup] 试听播放失败:', e);
+  }
+}
+
 // 初始化
 document.addEventListener('DOMContentLoaded', async () => {
   // 缓存 DOM 元素
@@ -95,29 +176,38 @@ function bindEvents() {
     });
   });
 
-  // 操作按钮
-  elements.btnExplain.addEventListener('click', () => sendToContent('EXPLAIN_PAGE'));
-  elements.btnVoice.addEventListener('click', () => sendToContent('START_VOICE'));
-  elements.btnAutoScroll.addEventListener('click', () => sendToContent('TOGGLE_AUTO_SCROLL'));
-  elements.btnAnnotate.addEventListener('click', () => sendToContent('START_ANNOTATE'));
-
   // 模型类型变化
-  elements.modelType.addEventListener('change', handleModelTypeChange);
+  if (elements.modelType) elements.modelType.addEventListener('change', handleModelTypeChange);
 
   // 显示/隐藏 API Key
-  elements.toggleApiKey.addEventListener('click', () => {
+  if (elements.toggleApiKey) elements.toggleApiKey.addEventListener('click', () => {
     const input = elements.apiKey;
     input.type = input.type === 'password' ? 'text' : 'password';
     elements.toggleApiKey.textContent = input.type === 'password' ? '👁️' : '🙈';
   });
 
   // 保存设置
-  elements.saveSettings.addEventListener('click', saveConfig);
+  if (elements.saveSettings) elements.saveSettings.addEventListener('click', saveConfig);
 
   // 语速滑块
-  elements.voiceRate.addEventListener('input', (e) => {
+  if (elements.voiceRate) elements.voiceRate.addEventListener('input', (e) => {
     elements.rateValue.textContent = e.target.value;
   });
+
+  // 语音选择：保存并自动试听
+  if (elements.voiceSelect) {
+    elements.voiceSelect.addEventListener('change', () => {
+      const voiceName = elements.voiceSelect.value || '';
+      pendingSelectedVoice = voiceName;
+
+      // 不要 await：确保在用户手势回调内同步触发 speak
+      try {
+        chrome.storage.local.set({ selectedVoice: voiceName });
+      } catch (e) {}
+
+      playVoicePreviewSync(voiceName);
+    });
+  }
 }
 
 // 切换标签页
@@ -207,6 +297,12 @@ async function loadConfig() {
     }
     if (voiceSettings.autoSpeak !== undefined) {
       elements.autoSpeak.checked = voiceSettings.autoSpeak;
+    }
+    if (typeof voiceSettings.selectedVoice === 'string') {
+      pendingSelectedVoice = voiceSettings.selectedVoice;
+      if (elements.voiceSelect) {
+        elements.voiceSelect.value = pendingSelectedVoice;
+      }
     }
     
   } catch (error) {
@@ -316,6 +412,11 @@ async function loadVoices() {
         option.textContent = `${voice.name} (${voice.lang})`;
         elements.voiceSelect.appendChild(option);
       });
+    }
+
+    // 回填已选语音（仅设置 value，不触发试听）
+    if (pendingSelectedVoice) {
+      elements.voiceSelect.value = pendingSelectedVoice;
     }
   };
   
