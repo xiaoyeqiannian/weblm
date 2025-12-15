@@ -19,7 +19,7 @@
     transform: translateY(0);
   }
 }
-}
+
 
 /* 聊天容器 */
 .pe-chat-container {
@@ -266,6 +266,17 @@
   box-shadow: 0 8px 24px rgba(0,0,0,0.2);
   cursor: pointer;
   transition: transform 120ms ease, box-shadow 120ms ease;
+  border: none;
+  outline: none;
+}
+
+#pe-floating-btn > img {
+  width: 80%;
+  height: 80%;
+  display: block;
+  object-fit: cover;
+  border-radius: 50%;
+  pointer-events: none;
 }
 
 #pe-floating-btn:hover { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0,0,0,0.25); }
@@ -279,6 +290,7 @@
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.35);
+}
 .page-explainer-label {
   animation: pe-fade-in 0.3s ease-out;
 }

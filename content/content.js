@@ -49,7 +49,17 @@ function createFloatingButton() {
   const floating = document.createElement('button');
   floating.id = 'pe-floating-btn';
   floating.setAttribute('aria-label', '打开 WebLM Side Panel');
-  floating.innerHTML = '🤖';
+  // 使用扩展内图标（避免 innerHTML 直接塞 emoji）
+  try {
+    const img = document.createElement('img');
+    img.src = chrome.runtime.getURL('icons/icon.svg');
+    img.alt = '';
+    img.setAttribute('aria-hidden', 'true');
+    img.draggable = false;
+    floating.replaceChildren(img);
+  } catch (e) {
+    floating.textContent = 'WebLM';
+  }
   document.body.appendChild(floating);
   floatingButton = floating;
 
