@@ -9,6 +9,78 @@ let autoScrollService = null;
 let voiceService = null;
 let isInitialized = false;
 let floatingButton = null;
+let isSidePanelOpen = false;
+
+function hasExplicitFloatingLeftTop(btn) {
+  if (!btn) return false;
+  const hasLeft = btn.style.left && btn.style.left !== 'auto';
+  const hasTop = btn.style.top && btn.style.top !== 'auto';
+  return Boolean(hasLeft && hasTop);
+}
+
+function saveFloatingButtonPosition(btn) {
+  if (!btn) return;
+  if (!hasExplicitFloatingLeftTop(btn)) return;
+  try {
+    const left = parseInt(btn.style.left || btn.getBoundingClientRect().left, 10);
+    const top = parseInt(btn.style.top || btn.getBoundingClientRect().top, 10);
+    chrome.storage.local.set({ floatingButtonPosition: { left, top } });
+  } catch (e) {}
+}
+
+function resetFloatingButtonToDefaultPosition(btn, { clearSaved } = { clearSaved: true }) {
+  if (!btn) return;
+  // 清空内联定位，回到 CSS 默认 right/bottom
+  btn.style.left = '';
+  btn.style.top = '';
+  btn.style.right = '';
+  btn.style.bottom = '';
+  if (clearSaved) {
+    try {
+      chrome.storage.local.remove(['floatingButtonPosition']);
+    } catch (e) {}
+  }
+}
+
+function isFloatingButtonPositionOutOfViewport(btn) {
+  if (!btn) return false;
+  if (!hasExplicitFloatingLeftTop(btn)) return false;
+
+  const rect = btn.getBoundingClientRect();
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  // 只要任何边界越界（哪怕部分越界）就视为“超出可视范围”
+  return rect.left < 0 || rect.top < 0 || rect.right > vw || rect.bottom > vh;
+}
+
+function restoreFloatingButtonPositionOrReset(btn) {
+  if (!btn) return;
+  try {
+    chrome.storage.local.get(['floatingButtonPosition'], (res) => {
+      const pos = res?.floatingButtonPosition;
+      if (pos && pos.left !== undefined && pos.top !== undefined) {
+        btn.style.left = pos.left + 'px';
+        btn.style.top = pos.top + 'px';
+        btn.style.right = 'auto';
+        btn.style.bottom = 'auto';
+
+        // 如果恢复后越界，按初始化位置重置
+        if (isFloatingButtonPositionOutOfViewport(btn)) {
+          resetFloatingButtonToDefaultPosition(btn, { clearSaved: true });
+        }
+      } else {
+        // 没有保存位置：如果当前（可能是旧内联）越界，也重置
+        if (isFloatingButtonPositionOutOfViewport(btn)) {
+          resetFloatingButtonToDefaultPosition(btn, { clearSaved: false });
+        }
+      }
+    });
+  } catch (e) {
+    if (isFloatingButtonPositionOutOfViewport(btn)) {
+      resetFloatingButtonToDefaultPosition(btn, { clearSaved: false });
+    }
+  }
+}
 
 // 初始化
 function init() {
@@ -92,7 +164,8 @@ function attachFloatingButtonViewportGuards(btn) {
 
   const onViewportChange = () => {
     // 只对“手动拖拽过（使用 left/top）”的按钮回弹；默认 right/bottom 不干预
-    clampFloatingButtonToViewport(btn, { save: true });
+    // 视口变化（包括 Side Panel 开合）只做回弹，不写入持久化位置
+    clampFloatingButtonToViewport(btn, { save: false });
   };
 
   window.addEventListener('resize', onViewportChange);
@@ -196,6 +269,8 @@ function makeFloatingDraggable(btn) {
     } else {
       // 不是拖动，视为点击（触发打开侧边栏）
       try {
+        // 记录“点击前”的位置（避免 Side Panel 打开导致坐标被挤压后写入）
+        saveFloatingButtonPosition(btn);
         const response = await chrome.runtime.sendMessage({ type: 'OPEN_SIDE_PANEL', source: 'content_script' });
         // 仅在确认 Side Panel 打开成功后隐藏
         if (response?.success) {
@@ -462,13 +537,19 @@ function monitorSidePanelState() {
       const response = await chrome.runtime.sendMessage({ type: 'CHECK_SIDE_PANEL_STATE' });
       console.log('[Content] CHECK_SIDE_PANEL_STATE =>', response);
       if (response && response.isOpen) {
+        isSidePanelOpen = true;
         floatingBtn.style.display = 'none';
       } else {
+        isSidePanelOpen = false;
         floatingBtn.style.display = 'flex';
+        // 显示时：恢复点击前位置；若越界则重置为默认
+        restoreFloatingButtonPositionOrReset(floatingBtn);
       }
     } catch (error) {
       console.warn('[Content] CHECK_SIDE_PANEL_STATE 失败:', error);
+      isSidePanelOpen = false;
       floatingBtn.style.display = 'flex';
+      restoreFloatingButtonPositionOrReset(floatingBtn);
     }
   })();
 
@@ -477,13 +558,18 @@ function monitorSidePanelState() {
     try {
       const response = await chrome.runtime.sendMessage({ type: 'CHECK_SIDE_PANEL_STATE' });
       if (response && response.isOpen) {
+        isSidePanelOpen = true;
         floatingBtn.style.display = 'none';
       } else {
+        isSidePanelOpen = false;
         floatingBtn.style.display = 'flex';
+        restoreFloatingButtonPositionOrReset(floatingBtn);
       }
     } catch (error) {
       // 如果消息发送失败，保持悬浮按钮可见
+      isSidePanelOpen = false;
       floatingBtn.style.display = 'flex';
+      restoreFloatingButtonPositionOrReset(floatingBtn);
     }
   }, 2000);
 
@@ -492,9 +578,12 @@ function monitorSidePanelState() {
     console.log('[Content] 收到消息:', message.type, message);
     if (message.type === 'SIDE_PANEL_STATE_CHANGED') {
       if (message.isOpen) {
+        isSidePanelOpen = true;
         floatingBtn.style.display = 'none';
       } else {
+        isSidePanelOpen = false;
         floatingBtn.style.display = 'flex';
+        restoreFloatingButtonPositionOrReset(floatingBtn);
       }
     }
   });
