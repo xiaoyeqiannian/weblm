@@ -433,6 +433,7 @@ async function toggleExplainSpeak() {
     const response = await analyzePageForExplanation();
     if (response && response.success) {
       updateMessage(currentExplainMessageDiv, response.response);
+      if (response.statusText) setMessageStatus(currentExplainMessageDiv, response.statusText);
 
       // 让 content script 解析并执行标注高亮
       try {
@@ -554,6 +555,25 @@ function addMessage(content, type) {
   return messageDiv;
 }
 
+function setMessageStatus(messageDiv, statusText) {
+  if (!messageDiv) return;
+  const text = String(statusText || '').trim();
+  if (!text) return;
+
+  let statusDiv = messageDiv.querySelector('.sp-message-status');
+  if (!statusDiv) {
+    statusDiv = document.createElement('div');
+    statusDiv.className = 'sp-message-status';
+    const contentDiv = messageDiv.querySelector('.sp-message-content');
+    if (contentDiv && contentDiv.parentNode === messageDiv) {
+      messageDiv.insertBefore(statusDiv, contentDiv);
+    } else {
+      messageDiv.appendChild(statusDiv);
+    }
+  }
+  statusDiv.textContent = text;
+}
+
 // 更新消息
 function updateMessage(messageDiv, content) {
   const contentDiv = messageDiv.querySelector('.sp-message-content');
@@ -647,6 +667,7 @@ async function askQuestion(question) {
     
     if (response && response.success) {
       updateMessage(loadingMessage, response.response);
+      if (response.statusText) setMessageStatus(loadingMessage, response.statusText);
 
       // 让 content script 解析并执行标注高亮
       try {

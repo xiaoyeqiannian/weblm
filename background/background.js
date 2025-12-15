@@ -48,6 +48,15 @@ class LLMProvider {
   constructor() {
     this.config = null;
     this.modelType = null;
+
+    // Per-request UI meta (e.g., warning/status text). Consumed by message handlers.
+    this._lastChatMeta = null;
+  }
+
+  consumeLastChatMeta() {
+    const meta = this._lastChatMeta;
+    this._lastChatMeta = null;
+    return meta;
   }
 
   async init() {
@@ -95,6 +104,9 @@ class LLMProvider {
     });
 
     const { stream = false, onChunk = null } = options;
+
+    // reset per-request meta
+    this._lastChatMeta = null;
 
     // Helper: check multi-modal (image) content
     const _hasImageInMessages = (msgs) => {
@@ -188,8 +200,11 @@ class LLMProvider {
 
           const retryData = await retryResponse.json();
           const content = retryData.choices[0].message.content;
-          // 添加提示，告知用户我们已移除图片
-          return `⚠️ 注意：当前模型不支持图片输入，已自动省略截图后返回结果。\n\n${content}`;
+          // 记录提示：由 UI 在消息气泡下方展示，不要混入对话文本
+          this._lastChatMeta = {
+            statusText: '⚠️ 注意：当前模型不支持图片输入，已自动省略截图后返回结果。'
+          };
+          return content;
         }
 
         throw new Error(`API 请求失败 (${response.status}): ${errorText}`);
@@ -460,7 +475,8 @@ async function handleMessage(message, sender) {
     case 'CHAT':
       try {
         const response = await llmProvider.chat(data.messages, { stream: false });
-        return { success: true, response };
+        const meta = llmProvider.consumeLastChatMeta();
+        return { success: true, response, statusText: meta?.statusText || '' };
       } catch (error) {
         return { success: false, error: error.message };
       }
@@ -473,7 +489,8 @@ async function handleMessage(message, sender) {
           data.pageText,
           data.question
         );
-        return { success: true, response };
+        const meta = llmProvider.consumeLastChatMeta();
+        return { success: true, response, statusText: meta?.statusText || '' };
       } catch (error) {
         console.error('[Background] 分析页面失败:', error);
         return { success: false, error: error.message };
