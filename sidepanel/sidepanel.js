@@ -25,6 +25,15 @@ function setVoiceIndicatorVisible(visible) {
 let ttsState = 'idle'; // idle | loading | playing | paused
 let currentExplainMessageDiv = null;
 
+// 老师讲解模式（滚动 + 画线 + 讲解）
+let lectureActive = false;
+let lectureSteps = [];
+let lectureIndex = 0;
+let lectureRunToken = 0;
+
+// 当前正在等待结束的 TTS promise（用于 cancel 时解阻塞）
+let ttsAwaitResolve = null;
+
 // DOM 元素
 let elements = {};
 
@@ -334,6 +343,22 @@ function stopExplainSpeak() {
       window.speechSynthesis.cancel();
     } catch (e) {}
   }
+
+  // 如果外部正在 await 播放结束，cancel 后主动解阻塞
+  try {
+    if (typeof ttsAwaitResolve === 'function') ttsAwaitResolve();
+  } catch (e) {}
+  ttsAwaitResolve = null;
+
+  // 同时停止老师讲解模式
+  lectureRunToken++;
+  lectureActive = false;
+  lectureSteps = [];
+  lectureIndex = 0;
+  try {
+    sendToContentScript('LECTURE_CLEAR');
+  } catch (e) {}
+
   ttsState = 'idle';
   setPlayButtonUI(ttsState);
 }
@@ -425,41 +450,53 @@ async function speakText(text, { keepPaused = false } = {}) {
     ? voices.find(v => v.name === options.selectedVoice)
     : null;
 
-  // 新一轮播放：清空队列并从头开始
-  synthesis.cancel();
-
   const chunks = chunkTextForTts(text);
   if (!chunks.length) return;
 
-  const utterances = chunks.map((chunk, idx) => {
-    const u = new SpeechSynthesisUtterance(chunk);
-    u.lang = 'zh-CN';
-    u.rate = options.rate;
-    if (selected) u.voice = selected;
-    if (idx === chunks.length - 1) {
-      u.onend = () => {
-        // 只有在非暂停态结束才回到 idle
-        if (!synthesis.paused) {
-          ttsState = 'idle';
-          setPlayButtonUI(ttsState);
+  // 清空队列，避免与历史播放残留重叠
+  try {
+    synthesis.cancel();
+  } catch (e) {}
+
+  // 严格顺序逐段播放：每段等到 onend 才进入下一段
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    if (!chunk) continue;
+
+    await new Promise((resolve) => {
+      const u = new SpeechSynthesisUtterance(chunk);
+      u.lang = 'zh-CN';
+      u.rate = options.rate;
+      if (selected) u.voice = selected;
+
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (ttsAwaitResolve === resolve) ttsAwaitResolve = null;
+        resolve();
+      };
+
+      u.onend = finish;
+      u.onerror = finish;
+      u.onstart = () => {
+        if (keepPaused) {
+          // 避免在 onstart 前调用 pause 无效
+          setTimeout(() => {
+            try {
+              synthesis.pause();
+            } catch (e) {}
+          }, 0);
         }
       };
-      u.onerror = () => {
-        ttsState = 'idle';
-        setPlayButtonUI(ttsState);
-      };
-    }
-    return u;
-  });
 
-  // 入队
-  utterances.forEach(u => synthesis.speak(u));
-
-  // 若需要保持暂停态（例如加载期间用户点了暂停），确保队列不自动开始播放
-  if (keepPaused) {
-    try {
-      synthesis.pause();
-    } catch (e) {}
+      ttsAwaitResolve = finish;
+      try {
+        synthesis.speak(u);
+      } catch (e) {
+        finish();
+      }
+    });
   }
 }
 
@@ -501,6 +538,116 @@ async function analyzePageForExplanation() {
   return response;
 }
 
+function parseJsonFromModelText(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+
+  // 可能被 ```json 包裹
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = fenced ? fenced[1].trim() : raw;
+
+  try {
+    return JSON.parse(candidate);
+  } catch (e) {
+    // 尝试截取首尾 JSON 数组
+    const start = candidate.indexOf('[');
+    const end = candidate.lastIndexOf(']');
+    if (start !== -1 && end !== -1 && end > start) {
+      return JSON.parse(candidate.slice(start, end + 1));
+    }
+  }
+  return null;
+}
+
+async function analyzePageForLectureSteps() {
+  const screenshotResponse = await chrome.runtime.sendMessage({ type: 'CAPTURE_VIEWPORT' });
+  if (!screenshotResponse.success) throw new Error('截图失败');
+
+  const textResponse = await sendToContentScript('GET_PAGE_TEXT');
+  const pageText = textResponse || '';
+
+  const question =
+    '你是一位老师，要像上课一样边滚动边画线讲解网页。\n' +
+    '请输出严格 JSON 数组，不要输出任何额外文字。\n' +
+    '数组元素格式：{ "description": "页面中可见的一小段原文(8-30字，尽量逐字引用，用于定位)", "scrollPercent": 0-100之间的数字(该段内容在整页大致位置，用于滚动兜底), "say": "对应讲解(<=120字)" }。\n' +
+    '请给出 8-12 步，按页面从上到下顺序排列。';
+
+  const response = await chrome.runtime.sendMessage({
+    type: 'ANALYZE_PAGE',
+    data: {
+      screenshot: screenshotResponse.screenshot,
+      pageText,
+      question
+    }
+  });
+
+  return response;
+}
+
+async function runLectureMode(steps, token) {
+  lectureActive = true;
+  lectureSteps = steps;
+  lectureIndex = 0;
+
+  currentExplainMessageDiv = addMessage('老师讲解开始…', 'assistant');
+
+  for (let i = 0; i < lectureSteps.length; i++) {
+    if (token !== lectureRunToken) return;
+    lectureIndex = i;
+
+    const step = lectureSteps[i] || {};
+    const say = String(step.say || '').trim();
+    if (!say) continue;
+
+    // 让内容脚本滚动并下划线
+    try {
+      await sendToContentScript('LECTURE_PREPARE_STEP', { step });
+    } catch (e) {
+      // 忽略，至少继续播报
+    }
+
+    // 更新 sidepanel 消息内容
+    try {
+      const prev = (currentExplainMessageDiv?.__lectureText || '').toString();
+      const next = prev ? prev + '\n\n' + say : say;
+      currentExplainMessageDiv.__lectureText = next;
+      updateMessage(currentExplainMessageDiv, next);
+    } catch (e) {}
+
+    if (!ttsAvailable()) continue;
+
+    // 如果用户在进行中点了暂停，等待恢复（speakText 内会保持 pause）
+    const shouldKeepPaused = ttsState === 'paused';
+    if (!shouldKeepPaused) {
+      ttsState = 'playing';
+      setPlayButtonUI(ttsState);
+    }
+
+    await speakText(say, { keepPaused: shouldKeepPaused });
+
+    // 该段讲解完成后，清除页面画线（不重置定位锚点）
+    try {
+      await sendToContentScript('LECTURE_CLEAR_MARKS');
+    } catch (e) {}
+
+    if (token !== lectureRunToken) return;
+    if (window.speechSynthesis && window.speechSynthesis.paused) {
+      ttsState = 'paused';
+      setPlayButtonUI(ttsState);
+    }
+  }
+
+  // 结束
+  lectureActive = false;
+  lectureSteps = [];
+  lectureIndex = 0;
+  ttsState = 'idle';
+  setPlayButtonUI(ttsState);
+  try {
+    await sendToContentScript('LECTURE_CLEAR');
+  } catch (e) {}
+}
+
 async function toggleExplainSpeak() {
   // 若在播报中：点击=暂停
   if (ttsState === 'playing') {
@@ -530,46 +677,70 @@ async function toggleExplainSpeak() {
   ttsState = 'loading';
   setPlayButtonUI(ttsState);
 
-  currentExplainMessageDiv = addMessage('正在解读网页...', 'assistant');
+  // 老师讲解模式：先让模型输出 steps（JSON），再逐步滚动+画线+播报
+  const myToken = ++lectureRunToken;
+  lectureActive = true;
+
+  currentExplainMessageDiv = addMessage('正在生成讲解步骤...', 'assistant');
   try {
-    const response = await analyzePageForExplanation();
-    if (response && response.success) {
-      updateMessage(currentExplainMessageDiv, response.response);
-      if (response.statusText) setMessageStatus(currentExplainMessageDiv, response.statusText);
-
-      // 让 content script 解析并执行标注高亮
-      try {
-        await sendToContentScript('HANDLE_ANNOTATIONS', { text: response.response });
-      } catch (e) {}
-
-      if (!ttsAvailable()) {
-        ttsState = 'idle';
-        setPlayButtonUI(ttsState);
-        return;
-      }
-
-      // 如果用户在加载期间点了暂停，保持 paused；否则进入 playing
-      const shouldKeepPaused = ttsState === 'paused';
-      if (!shouldKeepPaused) ttsState = 'playing';
-      setPlayButtonUI(ttsState);
-
-      await speakText(response.response, { keepPaused: shouldKeepPaused });
-
-      // 若在 speakText 期间被 pause，保持状态由按钮控制
-      if (window.speechSynthesis && window.speechSynthesis.paused) {
-        ttsState = 'paused';
-        setPlayButtonUI(ttsState);
-      }
-    } else {
-      updateMessage(currentExplainMessageDiv, '解读失败: ' + (response?.error || '未知错误'));
+    const response = await analyzePageForLectureSteps();
+    if (!response || !response.success) {
+      updateMessage(currentExplainMessageDiv, '生成讲解步骤失败: ' + (response?.error || '未知错误'));
+      lectureActive = false;
       ttsState = 'idle';
       setPlayButtonUI(ttsState);
+      return;
     }
+
+    const parsed = parseJsonFromModelText(response.response);
+    const steps = Array.isArray(parsed) ? parsed : null;
+    const cleaned = (steps || [])
+      .map(s => ({
+        description: String(s?.description || '').trim(),
+        say: String(s?.say || '').trim(),
+        scrollPercent: typeof s?.scrollPercent === 'number' ? s.scrollPercent : null
+      }))
+      .filter(s => s.say);
+
+    if (!cleaned.length) {
+      updateMessage(currentExplainMessageDiv, '生成讲解步骤失败：模型未返回可解析的 JSON steps');
+      lectureActive = false;
+      ttsState = 'idle';
+      setPlayButtonUI(ttsState);
+      return;
+    }
+
+    // 没有语音能力时不要自动执行 steps（否则会快速滚动导致“乱翻”）
+    if (!ttsAvailable()) {
+      updateMessage(currentExplainMessageDiv, '当前环境不支持语音播报，无法进入老师讲解模式（仅生成了讲解步骤）。');
+      lectureActive = false;
+      ttsState = 'idle';
+      setPlayButtonUI(ttsState);
+      try {
+        await sendToContentScript('LECTURE_CLEAR');
+      } catch (e) {}
+      return;
+    }
+
+    // 用第一步开场覆盖占位消息
+    updateMessage(currentExplainMessageDiv, '老师讲解开始…');
+    if (response.statusText) setMessageStatus(currentExplainMessageDiv, response.statusText);
+
+    // 若用户在 loading 期间点了暂停，保持 paused；否则进入 playing
+    const shouldKeepPaused = ttsState === 'paused';
+    if (!shouldKeepPaused) ttsState = 'playing';
+    setPlayButtonUI(ttsState);
+
+    await runLectureMode(cleaned, myToken);
   } catch (error) {
-    console.error('解读网页失败:', error);
-    updateMessage(currentExplainMessageDiv, '解读失败: ' + error.message);
+    console.error('老师讲解失败:', error);
+    updateMessage(currentExplainMessageDiv, '老师讲解失败: ' + error.message);
+    lectureActive = false;
     ttsState = 'idle';
     setPlayButtonUI(ttsState);
+    try {
+      await sendToContentScript('LECTURE_CLEAR');
+    } catch (e) {}
   }
 }
 

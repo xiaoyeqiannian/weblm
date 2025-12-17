@@ -11,6 +11,10 @@ let isInitialized = false;
 let floatingButton = null;
 let isSidePanelOpen = false;
 
+// 讲解模式（老师讲解）：由 sidepanel 驱动 TTS，这里负责滚动与画线
+let lectureModeActive = false;
+let lectureLastAnchorDocY = 0;
+
 function hasExplicitFloatingLeftTop(btn) {
   if (!btn) return false;
   const hasLeft = btn.style.left && btn.style.left !== 'auto';
@@ -378,6 +382,60 @@ function findElementByDescription(description) {
   return null;
 }
 
+function isVisibleForLecture(el) {
+  try {
+    if (!el || el.nodeType !== 1) return false;
+    const style = window.getComputedStyle(el);
+    if (!style || style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+    const rect = el.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return false;
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function findBestElementForLecture(description) {
+  const needle = String(description || '').trim();
+  if (!needle) return null;
+  const lowerNeedle = needle.toLowerCase();
+
+  // 收集一定数量候选，按“阅读顺序”选择：优先上次锚点之后最靠前的命中
+  const candidates = [];
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    const text = (node.textContent || '').trim();
+    if (!text) continue;
+    if (!text.toLowerCase().includes(lowerNeedle)) continue;
+
+    const parent = node.parentElement;
+    if (!parent) continue;
+    if (!isVisibleForLecture(parent)) continue;
+
+    const rect = parent.getBoundingClientRect();
+    const docY = window.scrollY + rect.top;
+    candidates.push({ el: parent, docY, rect });
+
+    if (candidates.length >= 60) break;
+  }
+
+  if (!candidates.length) return null;
+
+  const threshold = lectureLastAnchorDocY ? lectureLastAnchorDocY + 8 : window.scrollY - 40;
+  const after = candidates
+    .filter(c => Number.isFinite(c.docY) && c.docY >= threshold)
+    .sort((a, b) => a.docY - b.docY);
+
+  if (after.length) return after[0].el;
+
+  // 如果页面里只有更靠上的命中（比如重复标题），选离当前视口最近的一个，避免猛跳到顶部
+  const centerDocY = window.scrollY + window.innerHeight / 2;
+  candidates.sort((a, b) => Math.abs(a.docY - centerDocY) - Math.abs(b.docY - centerDocY));
+  return candidates[0].el;
+}
+
 // 截取屏幕
 async function captureScreenshot() {
   const response = await chrome.runtime.sendMessage({ type: 'CAPTURE_VIEWPORT' });
@@ -473,6 +531,36 @@ function handleMessage(message, sender, sendResponse) {
         } catch (e) {}
       })();
       break;
+
+    case 'LECTURE_PREPARE_STEP':
+      // 老师讲解模式：准备某一步（滚动到目标并下划线/高亮）
+      (async () => {
+        try {
+          const step = data?.step || {};
+          const result = await prepareLectureStep(step);
+          sendResponse({ success: true, result });
+        } catch (e) {
+          sendResponse({ success: false, error: e?.message || String(e) });
+        }
+      })();
+      return true;
+
+    case 'LECTURE_CLEAR':
+      try {
+        lectureModeActive = false;
+        lectureLastAnchorDocY = 0;
+        if (annotationService) annotationService.clear();
+      } catch (e) {}
+      sendResponse({ success: true });
+      return true;
+
+    case 'LECTURE_CLEAR_MARKS':
+      // 仅清理画线/高亮，不重置锚点（用于“讲完就消失”）
+      try {
+        if (annotationService) annotationService.clear();
+      } catch (e) {}
+      sendResponse({ success: true });
+      return true;
     
     case 'START_AUTO_SCROLL':
       autoScrollService.startAutoScroll({
@@ -509,6 +597,91 @@ function handleMessage(message, sender, sendResponse) {
       handleCommand(message.command);
       break;
   }
+}
+
+async function prepareLectureStep(step) {
+  lectureModeActive = true;
+
+  const description = String(step?.description || step?.targetText || '').trim();
+  const scrollPercentRaw = step?.scrollPercent;
+  const scrollPercent = typeof scrollPercentRaw === 'number' && Number.isFinite(scrollPercentRaw)
+    ? Math.max(0, Math.min(100, scrollPercentRaw))
+    : null;
+
+  // 默认每步先清一下，避免画面太乱
+  try {
+    if (annotationService) annotationService.clear();
+  } catch (e) {}
+
+  let found = false;
+  let scrolled = false;
+
+  if (description) {
+    let element = findBestElementForLecture(description) || findElementByDescription(description);
+    if (element) {
+      try {
+        // 优先用 scrollIntoView（对滚动容器/特殊页面更稳），失败再 fallback 到 window scroll
+        if (typeof element.scrollIntoView === 'function') {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+          await new Promise(r => setTimeout(r, 450));
+        } else {
+          await autoScrollService.scrollToElement(element, { block: 'center', offset: 120 });
+        }
+        scrolled = true;
+      } catch (e) {}
+
+      // 滚动后 DOM/布局可能变化，重新找一次
+      element = findBestElementForLecture(description) || findElementByDescription(description) || element;
+
+      // 更新锚点，保证后续按顺序向下找
+      try {
+        const r = element.getBoundingClientRect();
+        const docY = window.scrollY + r.top;
+        if (Number.isFinite(docY)) lectureLastAnchorDocY = docY;
+      } catch (e) {}
+
+      try {
+        annotationService.underlineElement(element, {
+          label: '',
+          lineWidth: 4
+        });
+      } catch (e) {}
+
+      found = true;
+    }
+  }
+
+  // 文本定位失败时，用 scrollPercent 兜底滚动到大致位置
+  if (!found && scrollPercent !== null) {
+    try {
+      const doc = document.documentElement;
+      const maxScroll = (doc.scrollHeight || 0) - window.innerHeight;
+      const target = Math.max(0, Math.min(maxScroll, (maxScroll * scrollPercent) / 100));
+      await autoScrollService.scrollTo(target, { animate: true, duration: 550 });
+      scrolled = true;
+      lectureLastAnchorDocY = target;
+    } catch (e) {}
+
+    // 滚动后再尝试一次定位并画线
+    if (description) {
+      try {
+        const element = findBestElementForLecture(description) || findElementByDescription(description);
+        if (element) {
+          try {
+            annotationService.underlineElement(element, { label: '', lineWidth: 4 });
+          } catch (e) {}
+          found = true;
+          try {
+            const r = element.getBoundingClientRect();
+            const docY = window.scrollY + r.top;
+            if (Number.isFinite(docY)) lectureLastAnchorDocY = docY;
+          } catch (e) {}
+        }
+      } catch (e) {}
+    }
+  }
+
+  return { found, scrolled, description };
 }
 
 // 处理快捷键命令

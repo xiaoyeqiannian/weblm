@@ -261,6 +261,87 @@ class AnnotationService {
   }
 
   /**
+   * 给元素画“下划线”（老师讲解模式使用）
+   */
+  underlineElement(element, options = {}) {
+    if (!element || typeof element.getBoundingClientRect !== 'function') return null;
+    const rect = element.getBoundingClientRect();
+    return this.underlineByRect(rect, options);
+  }
+
+  /**
+   * 按百分比位置画“下划线”（与 highlightByPosition 一致的输入）
+   */
+  underlineByPosition(position, options = {}) {
+    const { x_percent, y_percent, width_percent, height_percent } = position || {};
+    if ([x_percent, y_percent, width_percent, height_percent].some(v => typeof v !== 'number')) return null;
+
+    const x = (x_percent / 100) * window.innerWidth;
+    const y = (y_percent / 100) * window.innerHeight;
+    const width = (width_percent / 100) * window.innerWidth;
+    const height = (height_percent / 100) * window.innerHeight;
+
+    const rect = {
+      left: x - width / 2,
+      top: y - height / 2,
+      width,
+      height
+    };
+
+    return this.underlineByRect(rect, options);
+  }
+
+  underlineByRect(rect, options = {}) {
+    const {
+      color = '#FF6B6B',
+      lineWidth = 4,
+      padding = 2,
+      label = ''
+    } = options;
+
+    if (!this.svgContainer) return null;
+
+    const x1 = Math.max(0, rect.left);
+    const x2 = Math.min(window.innerWidth, rect.left + rect.width);
+    const baseY = rect.top + rect.height + padding;
+    const y = Math.max(0, Math.min(window.innerHeight - 1, baseY));
+
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', String(x1));
+    line.setAttribute('y1', String(y));
+    line.setAttribute('x2', String(x2));
+    line.setAttribute('y2', String(y));
+    line.setAttribute('stroke', color);
+    line.setAttribute('stroke-width', String(lineWidth));
+    line.setAttribute('stroke-linecap', 'round');
+
+    g.appendChild(line);
+
+    if (label) {
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      text.textContent = label;
+      text.setAttribute('x', String(x1));
+      text.setAttribute('y', String(Math.max(12, y - 8)));
+      text.setAttribute('fill', color);
+      text.setAttribute('font-size', '12');
+      text.setAttribute('font-weight', '700');
+      g.appendChild(text);
+    }
+
+    this.svgContainer.appendChild(g);
+
+    const annotation = {
+      type: 'underline',
+      rect,
+      groupEl: g,
+      options
+    };
+    this.annotations.push(annotation);
+    return annotation;
+  }
+
+  /**
    * 画箭头
    */
   drawArrow(fromX, fromY, toX, toY, options = {}) {
