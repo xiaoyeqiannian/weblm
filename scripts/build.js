@@ -3,14 +3,12 @@ const path = require('path');
 
 // 构建脚本 - 将源文件复制到正确的位置
 
-const sourceDir = path.join(__dirname, '../src');
 const distDir = path.join(__dirname, '../dist');
 
 // 需要复制的文件映射
 const filesToCopy = [
   { src: 'manifest.json', dest: 'manifest.json' },
   { src: 'background/background.js', dest: 'background/background.js' },
-  { src: 'content/content.js', dest: 'content/content.js' },
   { src: 'content/content.css', dest: 'content/content.css' },
   { src: 'popup/popup.html', dest: 'popup/popup.html' },
   { src: 'popup/popup.css', dest: 'popup/popup.css' },
@@ -19,7 +17,7 @@ const filesToCopy = [
   { src: 'sidepanel/sidepanel.css', dest: 'sidepanel/sidepanel.css' },
   { src: 'sidepanel/sidepanel.js', dest: 'sidepanel/sidepanel.js' },
   { src: 'icons', dest: 'icons' },
-  { src: 'src/core', dest: 'src/core' }
+  // dist 中不需要携带 src/core 源码；content script 会在下方合并写入 dist/content/content.js
 ];
 
 // 递归创建目录

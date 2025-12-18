@@ -535,33 +535,6 @@ function resumeTts() {
   } catch (e) {}
 }
 
-async function analyzePageForExplanation() {
-  let screenshot = '';
-  if (await isScreenshotEnabled()) {
-    const screenshotResponse = await chrome.runtime.sendMessage({ type: 'CAPTURE_VIEWPORT' });
-    if (!screenshotResponse.success) {
-      throw new Error('截图失败');
-    }
-    screenshot = screenshotResponse.screenshot;
-  }
-
-  // 获取页面文本
-  const textResponse = await sendToContentScript('GET_PAGE_TEXT');
-  const pageText = textResponse || '';
-
-  // 发送分析请求
-  const response = await chrome.runtime.sendMessage({
-    type: 'ANALYZE_PAGE',
-    data: {
-      screenshot,
-      pageText: pageText,
-      question: '请解读这个页面的主要内容，并用简洁易懂的中文说明。'
-    }
-  });
-
-  return response;
-}
-
 function parseJsonFromModelText(text) {
   const raw = String(text || '').trim();
   if (!raw) return null;
@@ -883,67 +856,6 @@ function updateMessage(messageDiv, content) {
   const contentDiv = messageDiv.querySelector('.sp-message-content');
   if (contentDiv) {
     contentDiv.innerHTML = formatMarkdown(content);
-  }
-}
-
-// 讲解页面
-async function explainPage() {
-  elements.explainBtn.disabled = true;
-  elements.explainBtn.innerHTML = '<span class="icon">🔄</span><span>分析中...</span>';
-  
-  const loadingMessage = addMessage('正在分析页面...', 'assistant');
-  
-  try {
-    // 发送消息到 content script
-    await sendToContentScript('EXPLAIN_PAGE');
-    
-    // 等待并获取响应
-    const response = await getPageAnalysis();
-    
-    if (response && response.success) {
-      updateMessage(loadingMessage, response.response);
-    } else {
-      updateMessage(loadingMessage, '分析失败: ' + (response?.error || '未知错误'));
-    }
-  } catch (error) {
-    console.error('讲解页面失败:', error);
-    updateMessage(loadingMessage, '讲解失败: ' + error.message);
-  } finally {
-    elements.explainBtn.disabled = false;
-    elements.explainBtn.innerHTML = '<span class="icon">📖</span><span>讲解页面</span>';
-  }
-}
-
-// 获取页面分析
-async function getPageAnalysis() {
-  try {
-    let screenshot = '';
-    if (await isScreenshotEnabled()) {
-      const screenshotResponse = await chrome.runtime.sendMessage({ type: 'CAPTURE_VIEWPORT' });
-      if (!screenshotResponse.success) {
-        throw new Error('截图失败');
-      }
-      screenshot = screenshotResponse.screenshot;
-    }
-    
-    // 获取页面文本
-    const textResponse = await sendToContentScript('GET_PAGE_TEXT');
-    const pageText = textResponse || '';
-    
-    // 发送分析请求
-    const response = await chrome.runtime.sendMessage({
-      type: 'ANALYZE_PAGE',
-      data: {
-        screenshot,
-        pageText: pageText,
-        question: '请讲解这个页面的主要内容'
-      }
-    });
-    
-    return response;
-  } catch (error) {
-    console.error('获取页面分析失败:', error);
-    return { success: false, error: error.message };
   }
 }
 

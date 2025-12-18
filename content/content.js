@@ -368,27 +368,39 @@ async function handleAnnotations(text) {
 
 // 通过描述查找元素
 function findElementByDescription(description) {
-  const lowerDesc = description.toLowerCase();
-  
-  // 尝试常见的选择器
+  const needle = String(description || '').trim();
+  if (!needle) return null;
+  const lowerNeedle = needle.toLowerCase();
+
+  const esc = (s) => {
+    try {
+      return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/["\\]/g, '\\$&');
+    } catch (e) {
+      return String(s).replace(/["\\]/g, '\\$&');
+    }
+  };
+
+  // 1) 优先尝试 querySelector 支持的属性匹配
   const selectors = [
-    `[aria-label*="${description}"]`,
-    `[title*="${description}"]`,
-    `button:contains("${description}")`,
-    `a:contains("${description}")`,
-    `h1:contains("${description}")`,
-    `h2:contains("${description}")`,
-    `h3:contains("${description}")`
+    `[aria-label*="${esc(needle)}"]`,
+    `[title*="${esc(needle)}"]`
   ];
 
   for (const selector of selectors) {
     try {
       const element = document.querySelector(selector);
       if (element) return element;
-    } catch (e) {
-      // 选择器可能无效
-    }
+    } catch (e) {}
   }
+
+  // 2) 替代 :contains：对常见可交互/标题元素用 textContent 包含判断
+  try {
+    const candidates = document.querySelectorAll('button, a, h1, h2, h3, [role="button"]');
+    for (const el of candidates) {
+      const txt = (el.textContent || '').trim();
+      if (txt && txt.toLowerCase().includes(lowerNeedle)) return el;
+    }
+  } catch (e) {}
 
   // 遍历所有文本节点查找
   const walker = document.createTreeWalker(
@@ -399,7 +411,7 @@ function findElementByDescription(description) {
   );
 
   while (walker.nextNode()) {
-    if (walker.currentNode.textContent.toLowerCase().includes(lowerDesc)) {
+    if ((walker.currentNode.textContent || '').toLowerCase().includes(lowerNeedle)) {
       return walker.currentNode.parentElement;
     }
   }
