@@ -10,6 +10,8 @@ let voiceService = null;
 let isInitialized = false;
 let floatingButton = null;
 let isSidePanelOpen = false;
+let bodyObserver = null; // 用于监听 DOM 变化
+let buttonCheckInterval = null; // 定期检查按钮存在性
 
 // 讲解模式（边看边讲）：由 sidepanel 驱动 TTS，这里负责滚动与画线
 let lectureModeActive = false;
@@ -122,9 +124,19 @@ function createFloatingButton() {
     return;
   }
 
+  // 确保 body 存在
+  if (!document.body) {
+    console.warn('[Content] document.body 不存在，延迟创建悬浮按钮');
+    setTimeout(createFloatingButton, 100);
+    return;
+  }
+
   const floating = document.createElement('button');
   floating.id = 'pe-floating-btn';
   floating.setAttribute('aria-label', '打开 WebLM Side Panel');
+  // 添加标记属性，方便识别是插件注入的元素
+  floating.setAttribute('data-pe-extension', 'true');
+  
   // 使用扩展内图标（避免 innerHTML 直接塞 emoji）
   try {
     const img = document.createElement('img');
@@ -160,6 +172,9 @@ function createFloatingButton() {
 
   // 使悬浮按钮可拖动
   makeFloatingDraggable(floating);
+
+  // SSR 兼容：启动按钮监听（防止按钮被移除）
+  startButtonObserver();
 }
 
 function attachFloatingButtonViewportGuards(btn) {
@@ -771,6 +786,110 @@ function monitorSidePanelState() {
     }
   });
 }
+
+// 监听按钮是否被移除（SSR 页面兼容）
+function startButtonObserver() {
+  // 清理旧的监听器
+  if (bodyObserver) {
+    bodyObserver.disconnect();
+    bodyObserver = null;
+  }
+  if (buttonCheckInterval) {
+    clearInterval(buttonCheckInterval);
+    buttonCheckInterval = null;
+  }
+
+  // 方案1: MutationObserver 监听 body 的子节点变化
+  if (document.body) {
+    bodyObserver = new MutationObserver((mutations) => {
+      // 检查悬浮按钮是否还在 DOM 中
+      const btn = document.getElementById('pe-floating-btn');
+      if (!btn || !document.body.contains(btn)) {
+        console.log('[Content] 检测到悬浮按钮被移除，重新创建');
+        floatingButton = null;
+        createFloatingButton();
+      }
+    });
+
+    bodyObserver.observe(document.body, {
+      childList: true,
+      subtree: false // 只监听 body 的直接子节点变化
+    });
+  }
+
+  // 方案2: 定期检查（兜底机制，处理某些极端情况）
+  buttonCheckInterval = setInterval(() => {
+    // 如果 Side Panel 打开，按钮本应隐藏，不需要重新创建
+    if (isSidePanelOpen) return;
+
+    const btn = document.getElementById('pe-floating-btn');
+    if (!btn || !document.body || !document.body.contains(btn)) {
+      console.log('[Content] 定期检查：悬浮按钮不存在，重新创建');
+      floatingButton = null;
+      createFloatingButton();
+    }
+  }, 3000); // 每 3 秒检查一次
+}
+
+// 清理监听器
+function stopButtonObserver() {
+  if (bodyObserver) {
+    bodyObserver.disconnect();
+    bodyObserver = null;
+  }
+  if (buttonCheckInterval) {
+    clearInterval(buttonCheckInterval);
+    buttonCheckInterval = null;
+  }
+}
+
+// SPA 路由变化监听（适用于 React Router、Vue Router 等）
+let lastUrl = location.href;
+function detectUrlChange() {
+  const currentUrl = location.href;
+  if (currentUrl !== lastUrl) {
+    console.log('[Content] 检测到 URL 变化:', lastUrl, '->', currentUrl);
+    lastUrl = currentUrl;
+    // URL 变化后，确保按钮仍然存在
+    setTimeout(() => {
+      if (!isSidePanelOpen) {
+        const btn = document.getElementById('pe-floating-btn');
+        if (!btn || !document.body.contains(btn)) {
+          console.log('[Content] URL 变化后按钮丢失，重新创建');
+          floatingButton = null;
+          createFloatingButton();
+        }
+      }
+    }, 500); // 等待路由渲染完成
+  }
+}
+
+// 监听 SPA 路由变化
+setInterval(detectUrlChange, 1000);
+
+// 监听 popstate 事件（浏览器前进/后退）
+window.addEventListener('popstate', () => {
+  setTimeout(detectUrlChange, 100);
+});
+
+// 监听 pushState 和 replaceState（拦截 SPA 路由）
+const originalPushState = history.pushState;
+const originalReplaceState = history.replaceState;
+
+history.pushState = function(...args) {
+  originalPushState.apply(this, args);
+  setTimeout(detectUrlChange, 100);
+};
+
+history.replaceState = function(...args) {
+  originalReplaceState.apply(this, args);
+  setTimeout(detectUrlChange, 100);
+};
+
+// 页面卸载时清理
+window.addEventListener('beforeunload', () => {
+  stopButtonObserver();
+});
 
 // 启动
 init();
