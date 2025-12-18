@@ -149,7 +149,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     voiceSelect: document.getElementById('voice-select'),
     voiceRate: document.getElementById('voice-rate'),
     rateValue: document.getElementById('rate-value'),
-    autoSpeak: document.getElementById('auto-speak')
+    autoSpeak: document.getElementById('auto-speak'),
+
+    // 截图设置
+    enableScreenshot: document.getElementById('enable-screenshot')
   };
 
   // 绑定事件
@@ -289,20 +292,26 @@ async function loadConfig() {
       updateStatusDisplay(modelType, config);
     }
     
-    // 加载语音设置
-    const voiceSettings = await chrome.storage.local.get(['voiceRate', 'autoSpeak', 'selectedVoice']);
-    if (voiceSettings.voiceRate) {
-      elements.voiceRate.value = voiceSettings.voiceRate;
-      elements.rateValue.textContent = voiceSettings.voiceRate;
+    // 加载语音/截图设置
+    const localSettings = await chrome.storage.local.get(['voiceRate', 'autoSpeak', 'selectedVoice', 'enableScreenshot']);
+    if (localSettings.voiceRate) {
+      elements.voiceRate.value = localSettings.voiceRate;
+      elements.rateValue.textContent = localSettings.voiceRate;
     }
-    if (voiceSettings.autoSpeak !== undefined) {
-      elements.autoSpeak.checked = voiceSettings.autoSpeak;
+    if (localSettings.autoSpeak !== undefined) {
+      elements.autoSpeak.checked = localSettings.autoSpeak;
     }
-    if (typeof voiceSettings.selectedVoice === 'string') {
-      pendingSelectedVoice = voiceSettings.selectedVoice;
+    if (typeof localSettings.selectedVoice === 'string') {
+      pendingSelectedVoice = localSettings.selectedVoice;
       if (elements.voiceSelect) {
         elements.voiceSelect.value = pendingSelectedVoice;
       }
+    }
+
+    // 截图开关默认开启
+    if (elements.enableScreenshot) {
+      const enabled = localSettings.enableScreenshot;
+      elements.enableScreenshot.checked = enabled === undefined ? true : !!enabled;
     }
     
   } catch (error) {
@@ -343,11 +352,12 @@ async function saveConfig() {
       showSaveStatus('✅ 配置已保存');
       updateStatusDisplay(modelType, config);
       
-      // 保存语音设置
+      // 保存语音/截图设置
       await chrome.storage.local.set({
         voiceRate: elements.voiceRate.value,
         autoSpeak: elements.autoSpeak.checked,
-        selectedVoice: elements.voiceSelect.value
+        selectedVoice: elements.voiceSelect.value,
+        enableScreenshot: elements.enableScreenshot ? !!elements.enableScreenshot.checked : true
       });
     } else {
       showSaveStatus('保存失败: ' + (response?.error || '未知错误'), true);

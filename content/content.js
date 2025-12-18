@@ -11,7 +11,7 @@ let isInitialized = false;
 let floatingButton = null;
 let isSidePanelOpen = false;
 
-// 讲解模式（老师讲解）：由 sidepanel 驱动 TTS，这里负责滚动与画线
+// 讲解模式（边看边讲）：由 sidepanel 驱动 TTS，这里负责滚动与画线
 let lectureModeActive = false;
 let lectureLastAnchorDocY = 0;
 
@@ -313,6 +313,16 @@ async function handleAnnotations(text) {
           pulse: true
         });
       } else {
+        // 如果用户关闭了截图输入，则不走基于截图的 AI 定位
+        try {
+          const res = await chrome.storage.local.get(['enableScreenshot']);
+          const enabled = res.enableScreenshot;
+          const screenshotEnabled = enabled === undefined ? true : !!enabled;
+          if (!screenshotEnabled) {
+            continue;
+          }
+        } catch (e) {}
+
         // 使用AI定位
         const screenshot = await captureScreenshot();
         const pageText = getPageText();
@@ -533,7 +543,7 @@ function handleMessage(message, sender, sendResponse) {
       break;
 
     case 'LECTURE_PREPARE_STEP':
-      // 老师讲解模式：准备某一步（滚动到目标并下划线/高亮）
+      // 边看边讲模式：准备某一步（滚动到目标并下划线）
       (async () => {
         try {
           const step = data?.step || {};

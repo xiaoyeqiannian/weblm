@@ -261,7 +261,7 @@ class AnnotationService {
   }
 
   /**
-   * 给元素画“下划线”（老师讲解模式使用）
+    * 给元素画“下划线”（边看边讲模式使用）
    */
   underlineElement(element, options = {}) {
     if (!element || typeof element.getBoundingClientRect !== 'function') return null;

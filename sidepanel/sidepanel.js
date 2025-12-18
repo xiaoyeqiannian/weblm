@@ -11,6 +11,27 @@ let tempInput = '';
 let isAutoScrolling = false;
 let isVoiceRecording = false;
 
+let screenshotEnabledCache = null;
+let screenshotEnabledCacheTs = 0;
+
+async function isScreenshotEnabled() {
+  const now = Date.now();
+  if (screenshotEnabledCache !== null && now - screenshotEnabledCacheTs < 1500) {
+    return screenshotEnabledCache;
+  }
+  try {
+    const res = await chrome.storage.local.get(['enableScreenshot']);
+    const enabled = res.enableScreenshot;
+    screenshotEnabledCache = enabled === undefined ? true : !!enabled;
+    screenshotEnabledCacheTs = now;
+    return screenshotEnabledCache;
+  } catch (e) {
+    screenshotEnabledCache = true;
+    screenshotEnabledCacheTs = now;
+    return true;
+  }
+}
+
 function setVoiceIndicatorVisible(visible) {
   if (!elements.voiceIndicator) return;
   elements.voiceIndicator.classList.toggle('is-visible', !!visible);
@@ -25,7 +46,7 @@ function setVoiceIndicatorVisible(visible) {
 let ttsState = 'idle'; // idle | loading | playing | paused
 let currentExplainMessageDiv = null;
 
-// 老师讲解模式（滚动 + 画线 + 讲解）
+// 边看边讲模式（滚动 + 画线 + 讲解）
 let lectureActive = false;
 let lectureSteps = [];
 let lectureIndex = 0;
@@ -350,7 +371,7 @@ function stopExplainSpeak() {
   } catch (e) {}
   ttsAwaitResolve = null;
 
-  // 同时停止老师讲解模式
+  // 同时停止边看边讲模式
   lectureRunToken++;
   lectureActive = false;
   lectureSteps = [];
@@ -515,10 +536,13 @@ function resumeTts() {
 }
 
 async function analyzePageForExplanation() {
-  // 获取截图
-  const screenshotResponse = await chrome.runtime.sendMessage({ type: 'CAPTURE_VIEWPORT' });
-  if (!screenshotResponse.success) {
-    throw new Error('截图失败');
+  let screenshot = '';
+  if (await isScreenshotEnabled()) {
+    const screenshotResponse = await chrome.runtime.sendMessage({ type: 'CAPTURE_VIEWPORT' });
+    if (!screenshotResponse.success) {
+      throw new Error('截图失败');
+    }
+    screenshot = screenshotResponse.screenshot;
   }
 
   // 获取页面文本
@@ -529,7 +553,7 @@ async function analyzePageForExplanation() {
   const response = await chrome.runtime.sendMessage({
     type: 'ANALYZE_PAGE',
     data: {
-      screenshot: screenshotResponse.screenshot,
+      screenshot,
       pageText: pageText,
       question: '请解读这个页面的主要内容，并用简洁易懂的中文说明。'
     }
@@ -560,14 +584,19 @@ function parseJsonFromModelText(text) {
 }
 
 async function analyzePageForLectureSteps() {
-  const screenshotResponse = await chrome.runtime.sendMessage({ type: 'CAPTURE_VIEWPORT' });
-  if (!screenshotResponse.success) throw new Error('截图失败');
+  let screenshot = '';
+  if (await isScreenshotEnabled()) {
+    const screenshotResponse = await chrome.runtime.sendMessage({ type: 'CAPTURE_VIEWPORT' });
+    if (!screenshotResponse.success) throw new Error('截图失败');
+    screenshot = screenshotResponse.screenshot;
+  }
 
   const textResponse = await sendToContentScript('GET_PAGE_TEXT');
   const pageText = textResponse || '';
 
   const question =
-    '你是一位老师，要像上课一样边滚动边画线讲解网页。\n' +
+    '你是一个懂网页内容的讲解伙伴，语气自然，像在和朋友分享交流。\n' +
+    '目标是边看边讲：讲到哪就引导滚动到哪，并用画线指一下对应内容。\n' +
     '请输出严格 JSON 数组，不要输出任何额外文字。\n' +
     '数组元素格式：{ "description": "页面中可见的一小段原文(8-30字，尽量逐字引用，用于定位)", "scrollPercent": 0-100之间的数字(该段内容在整页大致位置，用于滚动兜底), "say": "对应讲解(<=120字)" }。\n' +
     '请给出 8-12 步，按页面从上到下顺序排列。';
@@ -575,7 +604,7 @@ async function analyzePageForLectureSteps() {
   const response = await chrome.runtime.sendMessage({
     type: 'ANALYZE_PAGE',
     data: {
-      screenshot: screenshotResponse.screenshot,
+      screenshot,
       pageText,
       question
     }
@@ -589,7 +618,7 @@ async function runLectureMode(steps, token) {
   lectureSteps = steps;
   lectureIndex = 0;
 
-  currentExplainMessageDiv = addMessage('老师讲解开始…', 'assistant');
+  currentExplainMessageDiv = addMessage('我们开始边看边讲…', 'assistant');
 
   for (let i = 0; i < lectureSteps.length; i++) {
     if (token !== lectureRunToken) return;
@@ -677,7 +706,7 @@ async function toggleExplainSpeak() {
   ttsState = 'loading';
   setPlayButtonUI(ttsState);
 
-  // 老师讲解模式：先让模型输出 steps（JSON），再逐步滚动+画线+播报
+  // 边看边讲模式：先让模型输出 steps（JSON），再逐步滚动+画线+播报
   const myToken = ++lectureRunToken;
   lectureActive = true;
 
@@ -712,7 +741,7 @@ async function toggleExplainSpeak() {
 
     // 没有语音能力时不要自动执行 steps（否则会快速滚动导致“乱翻”）
     if (!ttsAvailable()) {
-      updateMessage(currentExplainMessageDiv, '当前环境不支持语音播报，无法进入老师讲解模式（仅生成了讲解步骤）。');
+      updateMessage(currentExplainMessageDiv, '当前环境不支持语音播报，无法进入边看边讲模式（仅生成了讲解步骤）。');
       lectureActive = false;
       ttsState = 'idle';
       setPlayButtonUI(ttsState);
@@ -723,7 +752,7 @@ async function toggleExplainSpeak() {
     }
 
     // 用第一步开场覆盖占位消息
-    updateMessage(currentExplainMessageDiv, '老师讲解开始…');
+    updateMessage(currentExplainMessageDiv, '我们开始边看边讲…');
     if (response.statusText) setMessageStatus(currentExplainMessageDiv, response.statusText);
 
     // 若用户在 loading 期间点了暂停，保持 paused；否则进入 playing
@@ -733,8 +762,8 @@ async function toggleExplainSpeak() {
 
     await runLectureMode(cleaned, myToken);
   } catch (error) {
-    console.error('老师讲解失败:', error);
-    updateMessage(currentExplainMessageDiv, '老师讲解失败: ' + error.message);
+    console.error('边看边讲失败:', error);
+    updateMessage(currentExplainMessageDiv, '边看边讲失败: ' + error.message);
     lectureActive = false;
     ttsState = 'idle';
     setPlayButtonUI(ttsState);
@@ -888,10 +917,13 @@ async function explainPage() {
 // 获取页面分析
 async function getPageAnalysis() {
   try {
-    // 获取截图
-    const screenshotResponse = await chrome.runtime.sendMessage({ type: 'CAPTURE_VIEWPORT' });
-    if (!screenshotResponse.success) {
-      throw new Error('截图失败');
+    let screenshot = '';
+    if (await isScreenshotEnabled()) {
+      const screenshotResponse = await chrome.runtime.sendMessage({ type: 'CAPTURE_VIEWPORT' });
+      if (!screenshotResponse.success) {
+        throw new Error('截图失败');
+      }
+      screenshot = screenshotResponse.screenshot;
     }
     
     // 获取页面文本
@@ -902,7 +934,7 @@ async function getPageAnalysis() {
     const response = await chrome.runtime.sendMessage({
       type: 'ANALYZE_PAGE',
       data: {
-        screenshot: screenshotResponse.screenshot,
+        screenshot,
         pageText: pageText,
         question: '请讲解这个页面的主要内容'
       }
@@ -920,10 +952,13 @@ async function askQuestion(question) {
   const loadingMessage = addMessage('正在思考...', 'assistant');
   
   try {
-    // 获取截图
-    const screenshotResponse = await chrome.runtime.sendMessage({ type: 'CAPTURE_VIEWPORT' });
-    if (!screenshotResponse.success) {
-      throw new Error('截图失败');
+    let screenshot = '';
+    if (await isScreenshotEnabled()) {
+      const screenshotResponse = await chrome.runtime.sendMessage({ type: 'CAPTURE_VIEWPORT' });
+      if (!screenshotResponse.success) {
+        throw new Error('截图失败');
+      }
+      screenshot = screenshotResponse.screenshot;
     }
     
     // 获取页面文本
@@ -934,7 +969,7 @@ async function askQuestion(question) {
     const response = await chrome.runtime.sendMessage({
       type: 'ANALYZE_PAGE',
       data: {
-        screenshot: screenshotResponse.screenshot,
+        screenshot,
         pageText: pageText,
         question: question
       }

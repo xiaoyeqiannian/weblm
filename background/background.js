@@ -51,6 +51,9 @@ class LLMProvider {
 
     // Per-request UI meta (e.g., warning/status text). Consumed by message handlers.
     this._lastChatMeta = null;
+
+    // Feature flags cache
+    this._featureCache = { enableScreenshot: null, ts: 0 };
   }
 
   consumeLastChatMeta() {
@@ -108,6 +111,25 @@ class LLMProvider {
     // reset per-request meta
     this._lastChatMeta = null;
 
+    // Feature: enable/disable screenshot (image input)
+    const _getEnableScreenshot = async () => {
+      const now = Date.now();
+      if (this._featureCache.enableScreenshot !== null && now - this._featureCache.ts < 1500) {
+        return this._featureCache.enableScreenshot;
+      }
+      try {
+        const res = await chrome.storage.local.get(['enableScreenshot']);
+        const enabled = res.enableScreenshot;
+        this._featureCache.enableScreenshot = enabled === undefined ? true : !!enabled;
+        this._featureCache.ts = now;
+        return this._featureCache.enableScreenshot;
+      } catch (e) {
+        this._featureCache.enableScreenshot = true;
+        this._featureCache.ts = now;
+        return true;
+      }
+    };
+
     // Helper: check multi-modal (image) content
     const _hasImageInMessages = (msgs) => {
       return msgs.some(msg => {
@@ -120,6 +142,17 @@ class LLMProvider {
         }
         return false;
       });
+    };
+
+    const _extractErrorMessage = (text) => {
+      const raw = String(text || '');
+      try {
+        const parsed = JSON.parse(raw);
+        const msg = parsed?.error?.message || parsed?.message || parsed?.error || '';
+        return String(msg || raw);
+      } catch (e) {
+        return raw;
+      }
     };
 
     // Helper: remove image items from messages, join text parts
@@ -145,6 +178,15 @@ class LLMProvider {
         return msg;
       });
     };
+
+    // 若关闭截图输入，则在发请求前去掉所有图片（避免每次触发“多模态不支持”重试）
+    const enableScreenshot = await _getEnableScreenshot();
+    if (!enableScreenshot && _hasImageInMessages(messages)) {
+      messages = _stripImagesFromMessages(messages);
+      this._lastChatMeta = {
+        statusText: 'ℹ️ 已关闭截图输入，本次仅使用页面文字进行分析。'
+      };
+    }
 
     // Claude 需要特殊处理
     if (this.modelType === MODEL_TYPES.CLAUDE) {
@@ -175,11 +217,16 @@ class LLMProvider {
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('[LLMProvider] API 错误:', errorText);
+        const hasImages = _hasImageInMessages(messages);
+        const errMsg = _extractErrorMessage(errorText);
 
-        // 如果是 400 并提示不支持 multi-modal，我们重试一次去掉图片
-        if (response.status === 400 && /multi-?modal|multi modal|received multi-modal/i.test(errorText)) {
-          console.warn('[LLMProvider] 检测到模型不支持多模态输入，尝试去除图片并重试');
+        // 有些 OpenAI 兼容服务会在 400/422/500 等状态下返回“收到多模态消息”之类错误
+        // 只要检测到“图片/多模态不支持”，就自动去图重试一次
+        const maybeImageUnsupported = /multi-?modal|multi modal|received\s+multi-?modal|does\s+not\s+support\s+image|not\s+support\s+image|unsupported\s+image|vision\s+is\s+not\s+enabled|image\s+input\s+not\s+supported/i.test(errMsg);
+
+        if (hasImages && maybeImageUnsupported && response.status !== 401) {
+          // 该错误可恢复：不要用 console.error（会被扩展错误页记录），用 warn 即可
+          console.warn('[LLMProvider] 模型不支持图片输入，自动省略截图并重试:', errMsg);
           const strippedMsgs = _stripImagesFromMessages(messages);
           const strippedBody = { ...requestBody, messages: strippedMsgs };
 
@@ -194,20 +241,22 @@ class LLMProvider {
 
           if (!retryResponse.ok) {
             const retryError = await retryResponse.text();
-            console.error('[LLMProvider] 重试（无图片）失败:', retryError);
-            throw new Error(`API 请求失败 (${retryResponse.status}): ${retryError}`);
+            const retryMsg = _extractErrorMessage(retryError);
+            console.error('[LLMProvider] 重试（无图片）失败:', retryMsg);
+            throw new Error(`API 请求失败 (${retryResponse.status}): ${retryMsg}`);
           }
 
           const retryData = await retryResponse.json();
           const content = retryData.choices[0].message.content;
-          // 记录提示：由 UI 在消息气泡下方展示，不要混入对话文本
           this._lastChatMeta = {
             statusText: '⚠️ 注意：当前模型不支持图片输入，已自动省略截图后返回结果。'
           };
           return content;
         }
 
-        throw new Error(`API 请求失败 (${response.status}): ${errorText}`);
+        // 不可恢复错误：记录为 error 并抛出
+        console.error('[LLMProvider] API 错误:', errMsg);
+        throw new Error(`API 请求失败 (${response.status}): ${errMsg}`);
       }
 
       if (stream && onChunk) {
@@ -333,6 +382,7 @@ class LLMProvider {
   }
 
   async analyzePageContent(screenshot, pageText, question) {
+    const hasScreenshot = typeof screenshot === 'string' && screenshot.trim().length > 0;
     const messages = [
       {
         role: 'system',
@@ -345,16 +395,14 @@ class LLMProvider {
       },
       {
         role: 'user',
-        content: [
-          {
-            type: 'image_url',
-            image_url: { url: screenshot }
-          },
-          {
-            type: 'text',
-            text: `页面文本内容：\n${pageText}\n\n用户问题：${question || '请帮我讲解这个页面的主要内容'}`
-          }
-        ]
+        content: hasScreenshot
+          ? [
+              { type: 'image_url', image_url: { url: screenshot } },
+              { type: 'text', text: `页面文本内容：\n${pageText}\n\n用户问题：${question || '请帮我讲解这个页面的主要内容'}` }
+            ]
+          : [
+              { type: 'text', text: `页面文本内容：\n${pageText}\n\n用户问题：${question || '请帮我讲解这个页面的主要内容'}` }
+            ]
       }
     ];
 
@@ -362,6 +410,10 @@ class LLMProvider {
   }
 
   async locateElements(screenshot, pageText, description) {
+    const hasScreenshot = typeof screenshot === 'string' && screenshot.trim().length > 0;
+    if (!hasScreenshot) {
+      throw new Error('截图输入已关闭，无法进行元素定位');
+    }
     const messages = [
       {
         role: 'system',
