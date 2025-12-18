@@ -10,10 +10,32 @@ class PageExplainerAgent {
     this.currentPageContext = null;
   }
 
+  static _getExplainSystemPrompt() {
+    try {
+      if (typeof globalThis !== 'undefined' && globalThis.WEBLM_PROMPTS?.EXPLAIN_SYSTEM_PROMPT) {
+        return globalThis.WEBLM_PROMPTS.EXPLAIN_SYSTEM_PROMPT;
+      }
+    } catch (e) {}
+
+    try {
+      if (typeof require === 'function') {
+        // eslint-disable-next-line global-require
+        const { WEBLM_PROMPTS } = require('../../libs/prompts.js');
+        if (WEBLM_PROMPTS?.EXPLAIN_SYSTEM_PROMPT) return WEBLM_PROMPTS.EXPLAIN_SYSTEM_PROMPT;
+      }
+    } catch (e) {}
+
+    return null;
+  }
+
   /**
    * 初始化页面上下文
    */
   async initPageContext(pageInfo) {
+    const explainPrompt = PageExplainerAgent._getExplainSystemPrompt();
+    if (!explainPrompt) {
+      throw new Error('缺少讲解系统提示词：请确保 libs/prompts.js 可用');
+    }
     this.currentPageContext = {
       url: pageInfo.url,
       title: pageInfo.title,
@@ -31,14 +53,9 @@ class PageExplainerAgent {
 - URL: ${pageInfo.url}
 - 标题: ${pageInfo.title}
 
-你的任务是：
-1. 帮助用户理解页面内容
-2. 回答用户关于页面的问题
-3. 指出页面中的重要元素
-4. 如果需要查看更多内容，可以建议用户翻页
-5. 使用清晰、友好的语言进行讲解
+${explainPrompt}
 
-当需要指出页面元素时，请使用 [标注:描述] 的格式，系统会自动在页面上画线标注。`
+元素标注：当且仅当有助于理解时，才用 [标注:描述] 指向页面主体内容中的关键位置；避免标注侧边栏等非主体区域。`
     }];
   }
 

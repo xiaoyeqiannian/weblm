@@ -48,6 +48,25 @@ class LLMProvider {
     this.modelType = null;
   }
 
+  static _getExplainSystemPrompt() {
+    try {
+      if (typeof globalThis !== 'undefined' && globalThis.WEBLM_PROMPTS?.EXPLAIN_SYSTEM_PROMPT) {
+        return globalThis.WEBLM_PROMPTS.EXPLAIN_SYSTEM_PROMPT;
+      }
+    } catch (e) {}
+
+    try {
+      // Node/CommonJS usage
+      if (typeof require === 'function') {
+        // eslint-disable-next-line global-require
+        const { WEBLM_PROMPTS } = require('../../libs/prompts.js');
+        if (WEBLM_PROMPTS?.EXPLAIN_SYSTEM_PROMPT) return WEBLM_PROMPTS.EXPLAIN_SYSTEM_PROMPT;
+      }
+    } catch (e) {}
+
+    return null;
+  }
+
   /**
    * 初始化模型配置
    */
@@ -259,15 +278,14 @@ class LLMProvider {
    * 分析页面内容（带截图）
    */
   async analyzePageContent(screenshot, pageText, question) {
+    const explainPrompt = LLMProvider._getExplainSystemPrompt();
+    if (!explainPrompt) {
+      throw new Error('缺少讲解系统提示词：请确保 libs/prompts.js 可用');
+    }
     const messages = [
       {
         role: 'system',
-        content: `你是一个专业的网页内容讲解助手。你的任务是：
-1. 分析用户当前浏览的网页内容
-2. 用清晰、易懂的语言讲解页面的主要内容
-3. 如果用户有具体问题，针对性地回答
-4. 可以指出页面中的重要元素位置，使用描述性语言（如"页面顶部"、"左侧菜单"等）
-5. 保持友好、专业的语气`
+        content: explainPrompt
       },
       {
         role: 'user',

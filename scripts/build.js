@@ -16,6 +16,7 @@ const filesToCopy = [
   { src: 'sidepanel/sidepanel.html', dest: 'sidepanel/sidepanel.html' },
   { src: 'sidepanel/sidepanel.css', dest: 'sidepanel/sidepanel.css' },
   { src: 'sidepanel/sidepanel.js', dest: 'sidepanel/sidepanel.js' },
+  { src: 'libs', dest: 'libs' },
   { src: 'icons', dest: 'icons' },
   // dist 中不需要携带 src/core 源码；content script 会在下方合并写入 dist/content/content.js
 ];

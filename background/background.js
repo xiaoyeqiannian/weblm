@@ -3,6 +3,31 @@
  * 处理扩展的后台逻辑
  */
 
+// Load shared prompt constants.
+// In MV3 service worker (classic script), importScripts is available.
+try {
+  importScripts(chrome.runtime.getURL('libs/prompts.js'));
+} catch (e) {
+  console.warn('[Background] 共享 prompts 加载失败，将回退到内置提示词:', e);
+}
+
+const EXPLAIN_SYSTEM_PROMPT = (typeof globalThis !== 'undefined' && globalThis.WEBLM_PROMPTS?.EXPLAIN_SYSTEM_PROMPT)
+  ? globalThis.WEBLM_PROMPTS.EXPLAIN_SYSTEM_PROMPT
+  : `你是一个网页内容讲解助手，讲解风格沉稳、专业、易懂。
+
+目标：讲清楚页面主体内容的主题与逻辑结构，帮助用户理解重点。
+
+范围约束：默认忽略侧边栏、顶部导航、底部、广告、推荐、目录、评论区、版权信息、弹窗、社交分享等非主体内容，不要花篇幅讲（除非它们承载关键信息，或用户明确提问）。
+
+讲解结构（先总后分）：
+1) 整体理解：2-4句话概括页面在讲什么、面向谁、目的是什么。
+2) 结构梳理：用简短列表概述主要章节/模块与关系。
+3) 重点识别：列出3-5个最重要的信息点（以“重点：”开头）。
+4) 重点讲解：对每个重点做更深入但易懂的解释（它在讲什么 → 为什么重要 → 对用户意味着什么/例子）。
+5) 自测题：最后给3道题（选择/简答均可），用于检验理解；除非用户要求，不要给答案。
+
+如果用户提了具体问题：优先按上述结构讲解主体内容，并在相应位置明确回答该问题。`;
+
 // ============== LLM Provider 内联代码 ==============
 
 // 模型配置类型
@@ -386,12 +411,7 @@ class LLMProvider {
     const messages = [
       {
         role: 'system',
-        content: `你是一个专业的网页内容讲解助手。你的任务是：
-1. 分析用户当前浏览的网页内容
-2. 用清晰、易懂的语言讲解页面的主要内容
-3. 如果用户有具体问题，针对性地回答
-4. 可以指出页面中的重要元素位置，使用描述性语言（如"页面顶部"、"左侧菜单"等）
-5. 保持友好、专业的语气`
+        content: EXPLAIN_SYSTEM_PROMPT
       },
       {
         role: 'user',
