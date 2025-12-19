@@ -17,6 +17,44 @@ let buttonCheckInterval = null; // 定期检查按钮存在性
 let lectureModeActive = false;
 let lectureLastAnchorDocY = 0;
 
+// Mock 演示：编译期常量（由 scripts/build.js 注入到 dist/content/content.js）
+// 开启方式：WEBLM_MOCK_DEMO=1 npm run build  或  npm run build -- --mock
+const __WEBLM_MOCK_DEMO__ = (typeof WEBLM_MOCK_DEMO !== 'undefined') ? WEBLM_MOCK_DEMO : false;
+let __weblmMockDemoRunning = false;
+
+async function setMockModeStorage(enabled, extra = {}) {
+  try {
+    await chrome.storage.local.set({
+      weblmMockMode: !!enabled,
+      weblmMockModeUpdatedAt: Date.now(),
+      ...extra
+    });
+  } catch (e) {}
+}
+
+function logMock(event, payload = {}) {
+  try {
+    const base = {
+      t: new Date().toISOString(),
+      event,
+      url: location.href,
+      y: Math.round(window.scrollY)
+    };
+    console.log('[MockDemo]', { ...base, ...payload });
+  } catch (e) {
+    console.log('[MockDemo]', event);
+  }
+}
+
+async function notifySidePanelSystem(text, extra = {}) {
+  try {
+    await chrome.runtime.sendMessage({
+      type: 'SIDE_PANEL_SYSTEM',
+      data: { text: String(text || ''), ...extra }
+    });
+  } catch (e) {}
+}
+
 function hasExplicitFloatingLeftTop(btn) {
   if (!btn) return false;
   const hasLeft = btn.style.left && btn.style.left !== 'auto';
@@ -113,6 +151,538 @@ function init() {
 
   isInitialized = true;
   console.log('Page Explainer Content Script 已初始化');
+
+  // Mock 演示：避免调用大模型，快速验证 播报/画线标注/滚动
+  if (__WEBLM_MOCK_DEMO__) {
+    // 避免重复运行
+    if (!globalThis.__WEBLM_MOCK_DEMO_STARTED__) {
+      globalThis.__WEBLM_MOCK_DEMO_STARTED__ = true;
+      setMockModeStorage(true, { weblmMockModeSource: 'build-flag' });
+      logMock('init', { enabled: true });
+      // 注意：不自动执行 demo。Mock 模式仅在用户交互（播放/发送/语音结果）触发。
+    }
+  }
+}
+
+function clamp(n, min, max) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function isWindowScroller(scroller) {
+  const se = document.scrollingElement || document.documentElement;
+  return !scroller || scroller === window || scroller === document.documentElement || scroller === document.body || scroller === se;
+}
+
+function getPrimaryScrollContainer() {
+  const se = document.scrollingElement || document.documentElement;
+  try {
+    if (se && se.scrollHeight - se.clientHeight > 80) return se;
+  } catch (e) {}
+
+  // fallback: find a big scrollable container (common in docs apps)
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  let best = null;
+  let bestScrollable = 0;
+
+  let nodes = [];
+  try {
+    nodes = Array.from(document.querySelectorAll('main, [role="main"], article, section, div'));
+  } catch (e) {}
+
+  const maxScan = 320;
+  for (let i = 0; i < Math.min(nodes.length, maxScan); i++) {
+    const el = nodes[i];
+    if (!el || el === document.body) continue;
+    if (isExtensionInjectedElement(el)) continue;
+    let style;
+    try {
+      style = window.getComputedStyle(el);
+    } catch (e) {
+      continue;
+    }
+    const oy = style?.overflowY;
+    if (oy !== 'auto' && oy !== 'scroll') continue;
+
+    let rect;
+    try {
+      rect = el.getBoundingClientRect();
+    } catch (e) {
+      continue;
+    }
+    if (!rect || rect.width < vw * 0.6 || rect.height < vh * 0.55) continue;
+
+    let scrollable = 0;
+    try {
+      scrollable = (el.scrollHeight || 0) - (el.clientHeight || 0);
+    } catch (e) {
+      scrollable = 0;
+    }
+    if (scrollable < 200) continue;
+
+    if (scrollable > bestScrollable) {
+      bestScrollable = scrollable;
+      best = el;
+    }
+  }
+
+  return best || se;
+}
+
+function getScrollMetrics(scroller) {
+  const se = document.scrollingElement || document.documentElement;
+  const isWin = isWindowScroller(scroller);
+  const el = isWin ? se : scroller;
+  const scrollTop = isWin ? window.scrollY : (el?.scrollTop || 0);
+  const clientHeight = isWin ? window.innerHeight : (el?.clientHeight || window.innerHeight);
+  const scrollHeight = isWin ? (se?.scrollHeight || 0) : (el?.scrollHeight || 0);
+  const maxScroll = Math.max(0, scrollHeight - clientHeight);
+  return { isWin, el, scrollTop, clientHeight, scrollHeight, maxScroll };
+}
+
+async function scrollPrimaryTo(scroller, top, { duration = 650 } = {}) {
+  const m = getScrollMetrics(scroller);
+  const target = Math.max(0, Math.min(m.maxScroll, top));
+
+  if (m.isWin) {
+    try {
+      await autoScrollService.scrollTo(target, { animate: true, duration });
+      return { ok: true, target, used: 'window' };
+    } catch (e) {
+      window.scrollTo(0, target);
+      return { ok: false, target, used: 'window' };
+    }
+  }
+
+  const el = m.el;
+  if (!el) {
+    window.scrollTo(0, target);
+    return { ok: false, target, used: 'fallback-window' };
+  }
+
+  const start = el.scrollTop || 0;
+  const distance = target - start;
+  const startTime = performance.now();
+
+  return new Promise((resolve) => {
+    const step = (now) => {
+      const t = Math.min(1, (now - startTime) / Math.max(1, duration));
+      const ease = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      try {
+        el.scrollTop = start + distance * ease;
+      } catch (e) {}
+      if (t < 1) {
+        requestAnimationFrame(step);
+      } else {
+        const end = el.scrollTop || 0;
+        const moved = Math.abs(end - start);
+        if (moved < 2 && Math.abs(target - start) > 40) {
+          try {
+            window.scrollTo(0, target);
+          } catch (e) {}
+          resolve({ ok: false, target, used: 'element+fallback-window', scrollerTag: String(el.tagName || '').toLowerCase(), moved });
+          return;
+        }
+
+        resolve({ ok: true, target, used: 'element', scrollerTag: String(el.tagName || '').toLowerCase(), moved });
+      }
+    };
+    requestAnimationFrame(step);
+  });
+}
+
+function normalizeText(text) {
+  return String(text || '')
+    .replace(/\s+/g, ' ')
+    .replace(/\u00a0/g, ' ')
+    .trim();
+}
+
+function getTextLineRectForElement(el, maxChars = 240) {
+  try {
+    if (!el) return null;
+
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) => {
+        const t = normalizeText(node.textContent);
+        if (!t || t.length < 20) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+
+    let textNode = null;
+    while (walker.nextNode()) {
+      textNode = walker.currentNode;
+      break;
+    }
+    if (!textNode) return null;
+
+    const raw = String(textNode.textContent || '');
+    const len = Math.min(raw.length, maxChars);
+    if (len <= 0) return null;
+
+    const range = document.createRange();
+    range.setStart(textNode, 0);
+    range.setEnd(textNode, len);
+
+    const rects = Array.from(range.getClientRects ? range.getClientRects() : []);
+    if (!rects.length) return null;
+
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const inView = rects
+      .filter(r => r && r.width > 20 && r.height > 10)
+      .filter(r => r.bottom > 0 && r.top < vh && r.right > 0 && r.left < vw);
+
+    const pickFrom = inView.length ? inView : rects;
+
+    let best = pickFrom[0];
+    for (const r of pickFrom) {
+      const score = (r.width || 0) - (r.height || 0) * 0.2;
+      const bestScore = (best.width || 0) - (best.height || 0) * 0.2;
+      if (score > bestScore) best = r;
+    }
+    if (!best) return null;
+
+    return {
+      left: best.left,
+      top: best.top,
+      width: best.width,
+      height: best.height
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+function pickSpeakSnippet(text, maxLen = 220) {
+  const t = normalizeText(text);
+  if (!t) return '';
+  if (t.length <= maxLen) return t;
+
+  const cut = t.slice(0, maxLen);
+  const punct = Math.max(
+    cut.lastIndexOf('。'),
+    cut.lastIndexOf('！'),
+    cut.lastIndexOf('？'),
+    cut.lastIndexOf('.'),
+    cut.lastIndexOf('!'),
+    cut.lastIndexOf('?'),
+    cut.lastIndexOf('；'),
+    cut.lastIndexOf(';'),
+    cut.lastIndexOf('，'),
+    cut.lastIndexOf(',')
+  );
+  if (punct > 40) return cut.slice(0, punct + 1);
+  return cut;
+}
+
+function pickFirstNonWhitespaceChars(text, n = 5) {
+  const limit = Math.max(1, Math.min(80, Number(n) || 5));
+  const t = String(text || '').replace(/\s+/g, '');
+  if (!t) return '';
+  return t.slice(0, limit);
+}
+
+function isExtensionInjectedElement(el) {
+  if (!el) return false;
+  try {
+    if (el.id && String(el.id).startsWith('page-explainer-')) return true;
+    if (el.id === 'pe-floating-btn') return true;
+    if (el.closest && el.closest('[data-pe-extension="true"]')) return true;
+    if (el.closest && el.closest('#page-explainer-annotation-container')) return true;
+  } catch (e) {}
+  return false;
+}
+
+function findSpeakableElementInViewport() {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const sampleYs = [vh * 0.28, vh * 0.5, vh * 0.72].map((v) => Math.max(1, Math.min(vh - 2, v)));
+
+  const isGood = (el) => {
+    if (!el || !el.getBoundingClientRect) return false;
+    if (isExtensionInjectedElement(el)) return false;
+    let rect;
+    try {
+      rect = el.getBoundingClientRect();
+    } catch (e) {
+      return false;
+    }
+    if (!rect || rect.width < 120 || rect.height < 14) return false;
+    if (rect.bottom < 40 || rect.top > vh - 40) return false;
+    if (rect.height > vh * 0.9 && rect.width > vw * 0.9) return false; // avoid huge containers
+    const tag = String(el.tagName || '').toLowerCase();
+    if ((tag === 'div' || tag === 'span') && rect.height > vh * 0.7) return false;
+
+    let style;
+    try {
+      style = window.getComputedStyle(el);
+    } catch (e) {
+      style = null;
+    }
+    if (style && (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0)) return false;
+
+    const txt = normalizeText(el.textContent);
+    if (txt.length < 60) return false;
+    return true;
+  };
+
+  // 1) 从视口中心向上找
+  for (const y of sampleYs) {
+    let el = document.elementFromPoint(vw * 0.5, y);
+    let depth = 0;
+    while (el && depth++ < 10) {
+      if (isExtensionInjectedElement(el)) break;
+      if (el.matches && el.matches('p, li, blockquote, pre, code, h1, h2, h3, h4')) {
+        if (isGood(el)) return el;
+      }
+      // 某些文档页用 div/span 承载文本
+      if (el.matches && el.matches('div, span') && (el.children?.length || 0) <= 2) {
+        if (isGood(el)) return el;
+      }
+      el = el.parentElement;
+    }
+  }
+
+  // 2) 扫描常见文本元素
+  try {
+    const candidates = Array.from(document.querySelectorAll('article p, main p, p, article li, main li, li, blockquote, pre, code, h1, h2, h3, h4'));
+    const inView = [];
+    for (const el of candidates) {
+      if (!el || isExtensionInjectedElement(el)) continue;
+      if (!isGood(el)) continue;
+      inView.push(el);
+      if (inView.length >= 30) break;
+    }
+    if (inView.length) return inView[Math.floor(inView.length / 2)];
+  } catch (e) {}
+
+  // 3) 文档类：fallback 扫描 div/span（但避免选到超大容器）
+  try {
+    const candidates = Array.from(document.querySelectorAll('main div, main span, article div, article span, div, span'));
+    const inView = [];
+    for (const el of candidates) {
+      if (!el || isExtensionInjectedElement(el)) continue;
+      if ((el.children?.length || 0) > 2) continue;
+      if (!isGood(el)) continue;
+      inView.push(el);
+      if (inView.length >= 24) break;
+    }
+    if (inView.length) return inView[Math.floor(inView.length / 2)];
+  } catch (e) {}
+
+  // 4) 最后兜底：扫描 text node
+  try {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) => {
+        const t = normalizeText(node.textContent);
+        if (!t || t.length < 60) return NodeFilter.FILTER_REJECT;
+        const p = node.parentElement;
+        if (!p || isExtensionInjectedElement(p)) return NodeFilter.FILTER_REJECT;
+        if (p.closest && p.closest('script, style, noscript')) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+
+    const hits = [];
+    let n = 0;
+    while (walker.nextNode()) {
+      n++;
+      const p = walker.currentNode.parentElement;
+      if (!p) continue;
+      const el = p.closest ? (p.closest('p, li, blockquote, pre, code, h1, h2, h3, h4, div, span') || p) : p;
+      if (!el || !isGood(el)) continue;
+      hits.push(el);
+      if (hits.length >= 20) break;
+      if (n >= 800) break;
+    }
+    if (hits.length) return hits[Math.floor(hits.length / 2)];
+  } catch (e) {}
+
+  return null;
+}
+
+async function startMockDemo() {
+  if (__weblmMockDemoRunning) return;
+  __weblmMockDemoRunning = true;
+
+  try {
+    const pageTextLen = (getPageText() || '').length;
+    const chunks = clamp(Math.ceil(pageTextLen / 1500), 3, 12);
+
+    const scroller = getPrimaryScrollContainer();
+    const metrics0 = getScrollMetrics(scroller);
+    const maxScroll = metrics0.maxScroll;
+    const scrollerInfo = {
+      used: metrics0.isWin ? 'window' : 'element',
+      tag: metrics0.el ? String(metrics0.el.tagName || '').toLowerCase() : '',
+      id: metrics0.el?.id || '',
+      className: (metrics0.el?.className && typeof metrics0.el.className === 'string') ? metrics0.el.className : '',
+      clientHeight: metrics0.clientHeight,
+      scrollHeight: metrics0.scrollHeight
+    };
+    const positions = [];
+    for (let i = 0; i < chunks; i++) {
+      const p = chunks === 1 ? 0 : Math.round((maxScroll * i) / (chunks - 1));
+      positions.push(p);
+    }
+
+    const runId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const runMeta = {
+      runId,
+      startedAt: Date.now(),
+      url: location.href,
+      title: document.title,
+      pageTextLen,
+      chunks,
+      maxScroll,
+      viewport: { w: window.innerWidth, h: window.innerHeight },
+      scroller: scrollerInfo
+    };
+
+    await setMockModeStorage(true, { weblmMockLastRun: runMeta });
+    logMock('start', runMeta);
+    notifySidePanelSystem(
+      `【Mock】开始演示：分${chunks}块滚动到页底；每块会选一段文字播报并做手写标注。\n` +
+        `pageTextLen=${pageTextLen}，maxScroll=${maxScroll}`,
+      { runMeta }
+    );
+
+    const stepRecords = [];
+
+    for (let i = 0; i < positions.length; i++) {
+      const target = positions[i];
+      const beforeY = Math.round(getScrollMetrics(scroller).scrollTop);
+      try {
+        if (annotationService) annotationService.clear();
+      } catch (e) {}
+
+      const scrollRes = await scrollPrimaryTo(scroller, target, { duration: 650 });
+      const afterY = Math.round(getScrollMetrics(scroller).scrollTop);
+      const percent = maxScroll > 0 ? Math.round((afterY / maxScroll) * 100) : 100;
+      logMock('scroll', { step: i + 1, total: positions.length, target, beforeY, afterY, percent, scrollerUsed: scrollRes?.used || '' });
+
+      // 给懒加载/布局一点时间
+      await sleep(450);
+
+      const el = findSpeakableElementInViewport();
+      if (!el) {
+        logMock('pick_element_failed', { step: i + 1, total: positions.length });
+        await sleep(400);
+        continue;
+      }
+
+      const text = pickSpeakSnippet(el.textContent, 240);
+      if (!text) continue;
+
+      const rect = (() => {
+        try {
+          const r = el.getBoundingClientRect();
+          return {
+            l: Math.round(r.left),
+            t: Math.round(r.top),
+            w: Math.round(r.width),
+            h: Math.round(r.height)
+          };
+        } catch (e) {
+          return null;
+        }
+      })();
+
+      const elInfo = {
+        tag: String(el.tagName || '').toLowerCase(),
+        id: el.id || '',
+        cls: (el.className && typeof el.className === 'string') ? el.className : '',
+        rect,
+        snippet: text,
+        snippetLen: text.length
+      };
+
+      // 画“手写圈/下划线”来指示播报内容
+      let markType = 'none';
+      try {
+        const r = el.getBoundingClientRect();
+        const preferUnderline = r.width > 260 || r.height > 64;
+        const textRect = getTextLineRectForElement(el);
+        if (preferUnderline) {
+          if (textRect && typeof annotationService.underlineByRect === 'function') {
+            annotationService.underlineByRect(textRect, { color: '#FF6B6B', lineWidth: 5, padding: 3, label: '' });
+          } else {
+            annotationService.underlineElement(el, { color: '#FF6B6B', lineWidth: 5, padding: 3, label: '' });
+          }
+          markType = 'underline';
+        } else {
+          if (typeof annotationService.circleElement === 'function') {
+            if (textRect && typeof annotationService.circleByRect === 'function') {
+              annotationService.circleByRect(textRect, { color: '#FF6B6B', lineWidth: 5, padding: 8, label: '' });
+            } else {
+              annotationService.circleElement(el, { color: '#FF6B6B', lineWidth: 5, padding: 8, label: '' });
+            }
+            markType = 'circle';
+          } else {
+            annotationService.highlightElement(el, { label: '', borderWidth: 5, padding: 8 });
+            markType = 'highlight';
+          }
+        }
+      } catch (e) {}
+
+      logMock('mark', { step: i + 1, total: positions.length, markType, ...elInfo, scroller: scrollerInfo });
+
+      // 播报
+      const speakStartedAt = Date.now();
+      try {
+        if (voiceService && typeof voiceService.speak === 'function') {
+          await voiceService.speak(text, { rate: 1.02, pitch: 1.0, volume: 1.0, lang: 'zh-CN' });
+        }
+      } catch (e) {
+        console.warn('[MockDemo] 播报失败:', e);
+      }
+
+      const speakMs = Date.now() - speakStartedAt;
+      logMock('speak_done', { step: i + 1, total: positions.length, speakMs, markType, snippetLen: text.length });
+
+      stepRecords.push({
+        step: i + 1,
+        target,
+        beforeY,
+        afterY,
+        percent,
+        markType,
+        tag: elInfo.tag,
+        rect: elInfo.rect,
+        snippetLen: elInfo.snippetLen
+      });
+
+      try {
+        await chrome.storage.local.set({
+          weblmMockLastStep: stepRecords[stepRecords.length - 1],
+          weblmMockLastRun: { ...runMeta, lastStep: i + 1, updatedAt: Date.now() }
+        });
+      } catch (e) {}
+
+      // 每段之间留一点缓冲
+      await sleep(250);
+    }
+
+    const finishedAt = Date.now();
+    const durationMs = finishedAt - runMeta.startedAt;
+    const summary = { ...runMeta, finishedAt, durationMs, steps: stepRecords.length };
+    try {
+      await chrome.storage.local.set({
+        weblmMockLastRun: { ...summary, stepRecords }
+      });
+    } catch (e) {}
+
+    logMock('done', summary);
+    notifySidePanelSystem(`【Mock】演示完成：共${stepRecords.length}步，用时${Math.round(durationMs / 1000)}s。\n可在控制台筛选 [MockDemo] 查看每步滚动/选段/标注/播报日志。`, { summary });
+  } finally {
+    __weblmMockDemoRunning = false;
+  }
 }
 
 // 创建悬浮按钮（打开 Side Panel）
@@ -328,6 +898,11 @@ async function handleAnnotations(text) {
           pulse: true
         });
       } else {
+        // Mock 模式下：禁止走任何基于大模型的定位能力
+        if (__WEBLM_MOCK_DEMO__) {
+          continue;
+        }
+
         // 如果用户关闭了截图输入，则不走基于截图的 AI 定位
         try {
           const res = await chrome.storage.local.get(['enableScreenshot']);
@@ -629,6 +1204,143 @@ function handleMessage(message, sender, sendResponse) {
         voiceService.stopListening();
       }
       break;
+
+    case 'START_MOCK_DEMO':
+      (async () => {
+        try {
+          await startMockDemo();
+          sendResponse({ success: true });
+        } catch (e) {
+          sendResponse({ success: false, error: e?.message || String(e) });
+        }
+      })();
+      return true;
+
+    case 'MOCK_PREPARE_STEP':
+      (async () => {
+        try {
+          const scroller = getPrimaryScrollContainer();
+          const metrics0 = getScrollMetrics(scroller);
+          const maxScroll = metrics0.maxScroll;
+          const scrollerInfo = {
+            used: metrics0.isWin ? 'window' : 'element',
+            tag: metrics0.el ? String(metrics0.el.tagName || '').toLowerCase() : '',
+            id: metrics0.el?.id || '',
+            className: (metrics0.el?.className && typeof metrics0.el.className === 'string') ? metrics0.el.className : '',
+            clientHeight: metrics0.clientHeight,
+            scrollHeight: metrics0.scrollHeight
+          };
+
+          const scrollPercentRaw = data?.scrollPercent;
+          const scrollPercent = typeof scrollPercentRaw === 'number' && Number.isFinite(scrollPercentRaw)
+            ? Math.max(0, Math.min(100, scrollPercentRaw))
+            : null;
+
+          const fixedCharsRaw = data?.fixedChars;
+          const fixedChars = (typeof fixedCharsRaw === 'number' && Number.isFinite(fixedCharsRaw))
+            ? Math.max(1, Math.min(80, Math.floor(fixedCharsRaw)))
+            : null;
+
+          const durationMsRaw = data?.durationMs;
+          const durationMs = (typeof durationMsRaw === 'number' && Number.isFinite(durationMsRaw))
+            ? Math.max(0, Math.min(5000, Math.floor(durationMsRaw)))
+            : 650;
+
+          const settleMsRaw = data?.settleMs;
+          const settleMs = (typeof settleMsRaw === 'number' && Number.isFinite(settleMsRaw))
+            ? Math.max(0, Math.min(5000, Math.floor(settleMsRaw)))
+            : 450;
+
+          // 每步先清理画线
+          try {
+            if (annotationService) annotationService.clear();
+          } catch (e) {}
+
+          let target = null;
+          if (scrollPercent !== null) {
+            target = Math.max(0, Math.min(maxScroll, (maxScroll * scrollPercent) / 100));
+            const before = Math.round(getScrollMetrics(scroller).scrollTop);
+            const scrollRes = await scrollPrimaryTo(scroller, target, { duration: durationMs });
+            const after = Math.round(getScrollMetrics(scroller).scrollTop);
+            logMock('scroll', { kind: 'mock_prepare_step', scrollPercent, target, before, after, scrollerUsed: scrollRes?.used || '', scroller: scrollerInfo });
+            await sleep(settleMs);
+          }
+
+          const el = findSpeakableElementInViewport();
+          if (!el) {
+            logMock('pick_element_failed', { scrollPercent, target });
+            sendResponse({ success: true, result: { found: false, scrollPercent, target, scroller: scrollerInfo } });
+            return;
+          }
+
+          const snippet = fixedChars !== null
+            ? pickFirstNonWhitespaceChars(el.textContent, fixedChars)
+            : pickSpeakSnippet(el.textContent, 240);
+          const textRect = getTextLineRectForElement(el);
+          const r = (() => {
+            try {
+              const rect = el.getBoundingClientRect();
+              return { l: Math.round(rect.left), t: Math.round(rect.top), w: Math.round(rect.width), h: Math.round(rect.height) };
+            } catch (e) { return null; }
+          })();
+
+          let markType = 'none';
+          try {
+            const rect = el.getBoundingClientRect();
+            const preferUnderline = rect.width > 260 || rect.height > 64;
+            if (preferUnderline) {
+              if (textRect && typeof annotationService.underlineByRect === 'function') {
+                annotationService.underlineByRect(textRect, { color: '#FF6B6B', lineWidth: 5, padding: 3, label: '' });
+              } else {
+                annotationService.underlineElement(el, { color: '#FF6B6B', lineWidth: 5, padding: 3, label: '' });
+              }
+              markType = 'underline';
+            } else {
+              if (typeof annotationService.circleElement === 'function') {
+                if (textRect && typeof annotationService.circleByRect === 'function') {
+                  annotationService.circleByRect(textRect, { color: '#FF6B6B', lineWidth: 5, padding: 8, label: '' });
+                } else {
+                  annotationService.circleElement(el, { color: '#FF6B6B', lineWidth: 5, padding: 8, label: '' });
+                }
+                markType = 'circle';
+              } else {
+                annotationService.highlightElement(el, { label: '', borderWidth: 5, padding: 8 });
+                markType = 'highlight';
+              }
+            }
+          } catch (e) {}
+
+          const result = {
+            found: true,
+            scrollPercent,
+            target,
+            markType,
+            snippet,
+            snippetLen: (snippet || '').length,
+            fixedChars,
+            durationMs,
+            settleMs,
+            scroller: scrollerInfo,
+            element: {
+              tag: String(el.tagName || '').toLowerCase(),
+              id: el.id || '',
+              className: (el.className && typeof el.className === 'string') ? el.className : '',
+              rect: r,
+              textRect: textRect
+            }
+          };
+
+          logMock('mock_prepare_step', { ...result, y: Math.round(window.scrollY) });
+          try {
+            await chrome.storage.local.set({ weblmMockLastStep: { ...result, y: Math.round(window.scrollY), ts: Date.now() } });
+          } catch (e) {}
+
+          sendResponse({ success: true, result });
+        } catch (e) {
+          sendResponse({ success: false, error: e?.message || String(e) });
+        }
+      })();
+      return true;
     
     case 'COMMAND':
       handleCommand(message.command);

@@ -4,7 +4,9 @@
   "description": "AI驱动的网页内容讲解助手，支持画线标注、自动翻页和语音对话",
   "scripts": {
     "build": "node scripts/build.js",
+    "build:mock": "WEBLM_MOCK_DEMO=1 node scripts/build.js",
     "dev": "node scripts/build.js --watch",
+    "dev:mock": "WEBLM_MOCK_DEMO=1 node scripts/build.js --watch",
     "pack": "cd dist && zip -r ../page-explainer-extension.zip ."
   },
   "devDependencies": {

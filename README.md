@@ -45,6 +45,10 @@ npm install
 2. 构建扩展
 ```bash
 npm run build
+
+# 开起mock模式
+npm run build:mock 
+# WEBLM_MOCK_DEMO=1 npm run build
 ```
 
 3. 加载扩展

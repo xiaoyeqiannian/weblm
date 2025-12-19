@@ -14,6 +14,24 @@ let isVoiceRecording = false;
 let screenshotEnabledCache = null;
 let screenshotEnabledCacheTs = 0;
 
+let mockModeCache = null;
+let mockModeCacheTs = 0;
+
+async function isMockModeEnabled() {
+  const now = Date.now();
+  if (mockModeCache !== null && now - mockModeCacheTs < 1500) return mockModeCache;
+  try {
+    const res = await chrome.storage.local.get(['weblmMockMode']);
+    mockModeCache = !!res.weblmMockMode;
+    mockModeCacheTs = now;
+    return mockModeCache;
+  } catch (e) {
+    mockModeCache = false;
+    mockModeCacheTs = now;
+    return false;
+  }
+}
+
 async function isScreenshotEnabled() {
   const now = Date.now();
   if (screenshotEnabledCache !== null && now - screenshotEnabledCacheTs < 1500) {
@@ -115,6 +133,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 接收来自 content/background 的外部消息（例如右键菜单触发的提问）
   initExternalMessageHandlers();
   await consumePendingAsk();
+
+  // 若 mock 模式开启，在对话中给出醒目的提示（无需调用大模型）
+  try {
+    const res = await chrome.storage.local.get(['weblmMockMode', 'weblmMockLastRun']);
+    if (res?.weblmMockMode) {
+      const last = res.weblmMockLastRun;
+      const brief = last
+        ? `\nlastRun: chunks=${last.chunks ?? '?'} steps=${last.steps ?? '?'} maxScroll=${last.maxScroll ?? '?'} pageTextLen=${last.pageTextLen ?? '?'}`
+        : '';
+      addMessage(`【Mock】Mock 演示模式已开启：将阻止大模型调用。${brief}`, 'system');
+    }
+  } catch (e) {}
 });
 
 function initExternalMessageHandlers() {
@@ -132,6 +162,13 @@ function initExternalMessageHandlers() {
       const text = message.text || message.data?.text || '';
       if (text) {
         handleVoiceResult(text);
+      }
+    }
+
+    if (message.type === 'SIDE_PANEL_SYSTEM') {
+      const text = message.data?.text || message.text || '';
+      if (text) {
+        addMessage(text, 'system');
       }
     }
   });
@@ -651,6 +688,87 @@ async function runLectureMode(steps, token) {
 }
 
 async function toggleExplainSpeak() {
+  // Mock 模式：不调用大模型，直接用 mock steps 驱动“滚动+标注+播报”
+  if (await isMockModeEnabled()) {
+    // 复用原有暂停/继续逻辑（ttsState）
+    if (ttsState === 'playing') {
+      pauseTts();
+      ttsState = 'paused';
+      setPlayButtonUI(ttsState);
+      return;
+    }
+    if (ttsState === 'paused') {
+      resumeTts();
+      ttsState = 'playing';
+      setPlayButtonUI(ttsState);
+      return;
+    }
+    if (ttsState === 'loading') {
+      pauseTts();
+      ttsState = 'paused';
+      setPlayButtonUI(ttsState);
+      return;
+    }
+
+    ttsState = 'loading';
+    setPlayButtonUI(ttsState);
+    const myToken = ++lectureRunToken;
+    lectureActive = true;
+
+    currentExplainMessageDiv = addMessage('【Mock】准备演示步骤（不会调用大模型）...', 'assistant');
+    try {
+      // Bohrium 指定页面：固定 6 段、每段 5 个字（非空白字符），快速验证滚动/标注/播报
+      const BOHRIUM_URL = 'https://www.bohrium.com/sciencepedia/Linear_Algebra_Primitives_Scalars_Vectors_Matrices_Tensors/677666';
+      const url = (currentTab?.url || '').toString();
+
+      let percents = [];
+      let fixedChars = null;
+      let durationMs = 650;
+      let settleMs = 450;
+
+      if (url.startsWith(BOHRIUM_URL)) {
+        percents = [0, 20, 40, 60, 80, 100];
+        fixedChars = 5;
+        durationMs = 260;
+        settleMs = 120;
+        updateMessage(currentExplainMessageDiv, `【Mock】Bohrium 专用演示：6 段滚动（0/20/40/60/80/100%），每段播报 5 个字。`);
+      } else {
+        // 默认：用页面文字长度推导步数，生成等分 scrollPercent
+        const pageText = (await sendToContentScript('GET_PAGE_TEXT')) || '';
+        const chunks = Math.max(3, Math.min(10, Math.ceil(pageText.length / 1500)));
+        for (let i = 0; i < chunks; i++) {
+          const p = chunks === 1 ? 0 : Math.round((100 * i) / (chunks - 1));
+          percents.push(p);
+        }
+      }
+
+      if (!ttsAvailable()) {
+        updateMessage(currentExplainMessageDiv, '【Mock】当前环境不支持语音播报（TTS），无法执行演示步骤。');
+        lectureActive = false;
+        ttsState = 'idle';
+        setPlayButtonUI(ttsState);
+        return;
+      }
+
+      if (!url.startsWith(BOHRIUM_URL)) {
+        updateMessage(currentExplainMessageDiv, '【Mock】开始演示：将分段滚动、手写标注并播报。');
+      }
+
+      const shouldKeepPaused = ttsState === 'paused';
+      if (!shouldKeepPaused) ttsState = 'playing';
+      setPlayButtonUI(ttsState);
+
+      await runMockLectureMode(percents, myToken, { fixedChars, durationMs, settleMs });
+    } catch (e) {
+      console.error('Mock 播放失败:', e);
+      updateMessage(currentExplainMessageDiv, '【Mock】演示失败: ' + (e?.message || String(e)));
+      lectureActive = false;
+      ttsState = 'idle';
+      setPlayButtonUI(ttsState);
+    }
+    return;
+  }
+
   // 若在播报中：点击=暂停
   if (ttsState === 'playing') {
     pauseTts();
@@ -744,6 +862,73 @@ async function toggleExplainSpeak() {
       await sendToContentScript('LECTURE_CLEAR');
     } catch (e) {}
   }
+}
+
+async function runMockLectureMode(scrollPercents, token, options = {}) {
+  const fixedChars = (typeof options.fixedChars === 'number' && Number.isFinite(options.fixedChars)) ? options.fixedChars : null;
+  const durationMs = (typeof options.durationMs === 'number' && Number.isFinite(options.durationMs)) ? options.durationMs : 650;
+  const settleMs = (typeof options.settleMs === 'number' && Number.isFinite(options.settleMs)) ? options.settleMs : 450;
+
+  lectureActive = true;
+  lectureSteps = [];
+  lectureIndex = 0;
+
+  for (let i = 0; i < scrollPercents.length; i++) {
+    if (token !== lectureRunToken) return;
+
+    const scrollPercent = scrollPercents[i];
+    // 让 content script 滚动并做“手写标注”，返回可播报文本片段
+    let result = null;
+    try {
+      const resp = await sendToContentScript('MOCK_PREPARE_STEP', { scrollPercent, fixedChars, durationMs, settleMs });
+      result = resp?.result || null;
+    } catch (e) {}
+
+    const say = String(result?.snippet || '').trim();
+    const markType = result?.markType || 'none';
+
+    // 更新 sidepanel 消息内容
+    try {
+      const prev = (currentExplainMessageDiv?.__lectureText || '').toString();
+      const head = `第 ${i + 1}/${scrollPercents.length} 段（scroll=${scrollPercent}% / mark=${markType}）`;
+      const body = say ? say : '（未找到可播报内容，已继续下一段）';
+      const next = prev ? prev + '\n\n' + head + '\n' + body : head + '\n' + body;
+      currentExplainMessageDiv.__lectureText = next;
+      updateMessage(currentExplainMessageDiv, next);
+    } catch (e) {}
+
+    if (!ttsAvailable()) continue;
+
+    const shouldKeepPaused = ttsState === 'paused';
+    if (!shouldKeepPaused) {
+      ttsState = 'playing';
+      setPlayButtonUI(ttsState);
+    }
+
+    if (say) {
+      await speakText(say, { keepPaused: shouldKeepPaused });
+    }
+
+    // 每段完成后清理画线（不重置定位锚点）
+    try {
+      await sendToContentScript('LECTURE_CLEAR_MARKS');
+    } catch (e) {}
+
+    if (token !== lectureRunToken) return;
+    if (window.speechSynthesis && window.speechSynthesis.paused) {
+      ttsState = 'paused';
+      setPlayButtonUI(ttsState);
+    }
+  }
+
+  lectureActive = false;
+  lectureSteps = [];
+  lectureIndex = 0;
+  ttsState = 'idle';
+  setPlayButtonUI(ttsState);
+  try {
+    await sendToContentScript('LECTURE_CLEAR');
+  } catch (e) {}
 }
 
 // 显示主视图
@@ -861,6 +1046,43 @@ function updateMessage(messageDiv, content) {
 
 // 提问
 async function askQuestion(question) {
+  // Mock 模式：拦截原本走大模型的请求，返回 mock 内容，并触发一次“标注+播报”验证
+  if (await isMockModeEnabled()) {
+    const msg = addMessage('【Mock】处理中（不会调用大模型）...', 'assistant');
+    try {
+      // 触发一次“当前视口”的 mock 标注（不强制滚动）
+      let step = null;
+      try {
+        const resp = await sendToContentScript('MOCK_PREPARE_STEP', {});
+        step = resp?.result || null;
+      } catch (e) {}
+
+      const snippet = String(step?.snippet || '').trim();
+      const markType = step?.markType || 'none';
+
+      const reply =
+        `【Mock】已拦截大模型请求。\n` +
+        `你的输入：${question}\n` +
+        `当前页已执行：标注(${markType}) + 播报(如支持)${snippet ? '。' : '，但未找到可播报段落。'}`;
+
+      updateMessage(msg, reply);
+      setMessageStatus(msg, 'Mock: 已拦截 ANALYZE_PAGE（不走大模型）');
+
+      // 用 sidepanel 的 TTS 播报（用于验证播放链路），不复用 play 按钮状态机
+      if (snippet && ttsAvailable()) {
+        try {
+          await speakText(snippet, { keepPaused: false });
+        } catch (e) {}
+      }
+
+      return;
+    } catch (error) {
+      console.error('Mock 提问失败:', error);
+      updateMessage(msg, '【Mock】失败: ' + (error?.message || String(error)));
+      return;
+    }
+  }
+
   const loadingMessage = addMessage('正在思考...', 'assistant');
   
   try {

@@ -3,6 +3,9 @@
  * 处理扩展的后台逻辑
  */
 
+// Build flags may be injected into dist/background/background.js by scripts/build.js
+const __WEBLM_MOCK_DEMO__ = (typeof WEBLM_MOCK_DEMO !== 'undefined') ? WEBLM_MOCK_DEMO : false;
+
 // Load shared prompt constants.
 // In MV3 service worker (classic script), importScripts is available.
 try {
@@ -483,6 +486,19 @@ const sidePanelStateByWindow = {};
 
 async function init() {
   console.log('[Background] 开始初始化...');
+
+  // 将 storage 中的 mock 状态与当前构建的 build flag 对齐，避免上一次 mock 构建遗留状态
+  try {
+    await chrome.storage.local.set({
+      weblmMockMode: !!__WEBLM_MOCK_DEMO__,
+      weblmMockModeSource: 'build-flag',
+      weblmMockModeUpdatedAt: Date.now()
+    });
+    console.log('[Background] Mock 标志已同步:', !!__WEBLM_MOCK_DEMO__);
+  } catch (e) {
+    // ignore
+  }
+
   llmProvider = new LLMProvider();
   await llmProvider.init();
   console.log('[Background] 初始化完成');
@@ -507,6 +523,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 async function handleMessage(message, sender) {
   const { type, data } = message;
+
+  const isMockModeEnabled = async () => {
+    try {
+      const res = await chrome.storage.local.get(['weblmMockMode']);
+      return !!res.weblmMockMode;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  const blockIfMock = async (reason) => {
+    const enabled = await isMockModeEnabled();
+    if (!enabled) return null;
+    console.warn('[LLM-BLOCKED]', { type, reason });
+    return {
+      success: false,
+      error: `Mock 模式已开启：已阻止大模型调用（${reason}）。如需真实调用，请使用非 mock 构建（npm run build）。`
+    };
+  };
 
   // 避免 background 自己转发消息时被自身再次处理
   if (message && message._relay === true) {
@@ -545,6 +580,10 @@ async function handleMessage(message, sender) {
       }
     
     case 'CHAT':
+      {
+        const blocked = await blockIfMock('CHAT');
+        if (blocked) return blocked;
+      }
       try {
         const response = await llmProvider.chat(data.messages, { stream: false });
         const meta = llmProvider.consumeLastChatMeta();
@@ -554,6 +593,10 @@ async function handleMessage(message, sender) {
       }
     
     case 'ANALYZE_PAGE':
+      {
+        const blocked = await blockIfMock('ANALYZE_PAGE');
+        if (blocked) return blocked;
+      }
       try {
         console.log('[Background] 开始分析页面');
         const response = await llmProvider.analyzePageContent(
@@ -589,8 +632,24 @@ async function handleMessage(message, sender) {
       } catch (error) {
         return { success: false, error: error.message };
       }
+
+    case 'SIDE_PANEL_SYSTEM':
+      try {
+        const text = (data?.text || data?.message || message?.text || '').toString();
+        const payload = { text, ts: Date.now(), extra: data || {} };
+        try {
+          chrome.runtime.sendMessage({ type: 'SIDE_PANEL_SYSTEM', data: payload, _relay: true });
+        } catch (e) {}
+        return { success: true };
+      } catch (error) {
+        return { success: false, error: error.message };
+      }
     
     case 'LOCATE_ELEMENTS':
+      {
+        const blocked = await blockIfMock('LOCATE_ELEMENTS');
+        if (blocked) return blocked;
+      }
       try {
         const result = await llmProvider.locateElements(
           data.screenshot,

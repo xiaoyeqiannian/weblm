@@ -10,6 +10,91 @@ class AnnotationService {
     this.annotations = [];
     this.animationId = null;
     this.isInitialized = false;
+
+    this.container = null;
+    this.svgContainer = null;
+  }
+
+  _rand(min, max) {
+    return min + Math.random() * (max - min);
+  }
+
+  _jitter(amount) {
+    return this._rand(-amount, amount);
+  }
+
+  _mountContainer() {
+    try {
+      if (!this.container) return;
+      const host = document.documentElement || document.body;
+      if (!host) return;
+      if (!host.contains(this.container)) {
+        host.appendChild(this.container);
+      }
+    } catch (e) {}
+  }
+
+  _ensureMounted() {
+    try {
+      if (!this.container) return;
+      const host = document.documentElement || document.body;
+      if (!host) return;
+      if (!host.contains(this.container)) {
+        this._mountContainer();
+      }
+    } catch (e) {}
+  }
+
+  _createSvgGroup() {
+    if (!this.svgContainer) return null;
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('vector-effect', 'non-scaling-stroke');
+    return g;
+  }
+
+  _appendHandDrawnPath(group, d, { color, lineWidth, opacity = 1 }) {
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', d);
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', color);
+    path.setAttribute('stroke-width', String(lineWidth));
+    path.setAttribute('stroke-linecap', 'round');
+    path.setAttribute('stroke-linejoin', 'round');
+    path.setAttribute('opacity', String(opacity));
+    group.appendChild(path);
+    return path;
+  }
+
+  _handDrawnUnderlinePath(x1, x2, y, { waveAmp = 2, waveFreq = 3, jitter = 1.2 } = {}) {
+    const w = Math.max(1, x2 - x1);
+    const step = Math.max(10, Math.min(18, Math.round(w / 18)));
+    let d = '';
+    for (let x = x1; x <= x2; x += step) {
+      const t = (x - x1) / w;
+      const yy = y + Math.sin(t * Math.PI * 2 * waveFreq) * waveAmp + this._jitter(jitter);
+      const xx = x + this._jitter(jitter);
+      d += (d ? ' L ' : 'M ') + `${xx.toFixed(2)} ${yy.toFixed(2)}`;
+    }
+    // ensure reach end
+    if (x2 > x1) {
+      const yy = y + Math.sin(Math.PI * 2 * waveFreq) * waveAmp + this._jitter(jitter);
+      const xx = x2 + this._jitter(jitter);
+      d += ` L ${xx.toFixed(2)} ${yy.toFixed(2)}`;
+    }
+    return d;
+  }
+
+  _handDrawnEllipsePath(cx, cy, rx, ry, { jitter = 1.8 } = {}) {
+    const steps = 22;
+    let d = '';
+    for (let i = 0; i <= steps; i++) {
+      const t = (i / steps) * Math.PI * 2;
+      const x = cx + Math.cos(t) * rx + this._jitter(jitter);
+      const y = cy + Math.sin(t) * ry + this._jitter(jitter);
+      d += (i === 0 ? 'M ' : ' L ') + `${x.toFixed(2)} ${y.toFixed(2)}`;
+    }
+    d += ' Z';
+    return d;
   }
 
   /**
@@ -23,12 +108,12 @@ class AnnotationService {
     this.container.id = 'page-explainer-annotation-container';
     this.container.style.cssText = `
       position: fixed;
-      top: 0;
-      left: 0;
+      inset: 0;
       width: 100%;
       height: 100%;
       pointer-events: none;
-      z-index: 2147483646;
+      z-index: 2147483647;
+      isolation: isolate;
     `;
 
     // 创建 Canvas
@@ -47,10 +132,13 @@ class AnnotationService {
       left: 0;
       width: 100%;
       height: 100%;
+      pointer-events: none;
+      overflow: visible;
     `;
     this.container.appendChild(this.svgContainer);
 
-    document.body.appendChild(this.container);
+    // 某些站点会替换 body 内容，挂到 documentElement 更稳
+    this._mountContainer();
 
     this.ctx = this.canvas.getContext('2d');
     this._resize();
@@ -68,7 +156,16 @@ class AnnotationService {
     const dpr = window.devicePixelRatio || 1;
     this.canvas.width = window.innerWidth * dpr;
     this.canvas.height = window.innerHeight * dpr;
-    this.ctx.scale(dpr, dpr);
+
+    // reset transform each time to avoid accumulating scale
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    if (this.svgContainer) {
+      this.svgContainer.setAttribute('width', String(window.innerWidth));
+      this.svgContainer.setAttribute('height', String(window.innerHeight));
+      this.svgContainer.setAttribute('viewBox', `0 0 ${window.innerWidth} ${window.innerHeight}`);
+      this.svgContainer.setAttribute('preserveAspectRatio', 'none');
+    }
   }
 
   /**
@@ -165,67 +262,75 @@ class AnnotationService {
    * 高亮元素
    */
   highlightElement(element, options = {}) {
+    // 改为“手写圈/线”风格：用 SVG 画一个圈来指示内容区域
     const {
       color = '#FF6B6B',
-      backgroundColor = 'rgba(255, 107, 107, 0.2)',
-      borderWidth = 3,
-      borderRadius = 4,
-      padding = 4,
-      label = '',
-      pulse = true
+      borderWidth = 4,
+      padding = 6,
+      label = ''
     } = options;
 
+    if (!element || typeof element.getBoundingClientRect !== 'function') return null;
     const rect = element.getBoundingClientRect();
+    return this.circleByRect(rect, { color, lineWidth: borderWidth, padding, label });
+  }
 
-    // 创建高亮框
-    const highlight = document.createElement('div');
-    highlight.className = 'page-explainer-highlight';
-    highlight.style.cssText = `
-      position: fixed;
-      left: ${rect.left - padding}px;
-      top: ${rect.top - padding}px;
-      width: ${rect.width + padding * 2}px;
-      height: ${rect.height + padding * 2}px;
-      border: ${borderWidth}px solid ${color};
-      border-radius: ${borderRadius}px;
-      background-color: ${backgroundColor};
-      pointer-events: none;
-      z-index: 2147483645;
-      box-sizing: border-box;
-      ${pulse ? 'animation: page-explainer-pulse 1.5s ease-in-out infinite;' : ''}
-    `;
+  circleElement(element, options = {}) {
+    if (!element || typeof element.getBoundingClientRect !== 'function') return null;
+    const rect = element.getBoundingClientRect();
+    return this.circleByRect(rect, options);
+  }
 
-    // 添加标签
+  circleByRect(rect, options = {}) {
+    this._ensureMounted();
+    const {
+      color = '#FF6B6B',
+      lineWidth = 4,
+      padding = 6,
+      label = ''
+    } = options;
+
+    const g = this._createSvgGroup();
+    if (!g) return null;
+
+    const left = Math.max(0, rect.left - padding);
+    const top = Math.max(0, rect.top - padding);
+    const right = Math.min(window.innerWidth, rect.left + rect.width + padding);
+    const bottom = Math.min(window.innerHeight, rect.top + rect.height + padding);
+    const w = Math.max(2, right - left);
+    const h = Math.max(2, bottom - top);
+
+    const cx = left + w / 2;
+    const cy = top + h / 2;
+    const rx = w / 2;
+    const ry = h / 2;
+
+    const d1 = this._handDrawnEllipsePath(cx, cy, rx, ry, { jitter: 1.8 });
+    const d2 = this._handDrawnEllipsePath(cx + this._jitter(1.2), cy + this._jitter(1.2), rx, ry, { jitter: 2.2 });
+
+    this._appendHandDrawnPath(g, d1, { color, lineWidth, opacity: 0.95 });
+    this._appendHandDrawnPath(g, d2, { color, lineWidth: Math.max(2, lineWidth - 1), opacity: 0.55 });
+
     if (label) {
-      const labelEl = document.createElement('div');
-      labelEl.className = 'page-explainer-label';
-      labelEl.textContent = label;
-      labelEl.style.cssText = `
-        position: absolute;
-        top: -28px;
-        left: 0;
-        background: ${color};
-        color: white;
-        padding: 4px 8px;
-        border-radius: 4px;
-        font-size: 12px;
-        font-weight: bold;
-        white-space: nowrap;
-      `;
-      highlight.appendChild(labelEl);
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      text.textContent = label;
+      text.setAttribute('x', String(Math.max(0, left)));
+      text.setAttribute('y', String(Math.max(14, top - 8)));
+      text.setAttribute('fill', color);
+      text.setAttribute('font-size', '12');
+      text.setAttribute('font-weight', '700');
+      g.appendChild(text);
     }
 
-    this.container.appendChild(highlight);
+    this.svgContainer.appendChild(g);
 
     const annotation = {
-      type: 'highlight',
-      element,
-      highlightEl: highlight,
+      type: 'circle',
+      rect,
+      groupEl: g,
       options
     };
-
     this.annotations.push(annotation);
-
     return annotation;
   }
 
@@ -292,6 +397,7 @@ class AnnotationService {
   }
 
   underlineByRect(rect, options = {}) {
+    this._ensureMounted();
     const {
       color = '#FF6B6B',
       lineWidth = 4,
@@ -306,17 +412,14 @@ class AnnotationService {
     const baseY = rect.top + rect.height + padding;
     const y = Math.max(0, Math.min(window.innerHeight - 1, baseY));
 
-    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    line.setAttribute('x1', String(x1));
-    line.setAttribute('y1', String(y));
-    line.setAttribute('x2', String(x2));
-    line.setAttribute('y2', String(y));
-    line.setAttribute('stroke', color);
-    line.setAttribute('stroke-width', String(lineWidth));
-    line.setAttribute('stroke-linecap', 'round');
+    const g = this._createSvgGroup();
+    if (!g) return null;
 
-    g.appendChild(line);
+    const d1 = this._handDrawnUnderlinePath(x1, x2, y, { waveAmp: 2.4, waveFreq: 2.5, jitter: 1.1 });
+    const d2 = this._handDrawnUnderlinePath(x1, x2, y + this._jitter(1.4), { waveAmp: 2.0, waveFreq: 2.8, jitter: 1.5 });
+
+    this._appendHandDrawnPath(g, d1, { color, lineWidth, opacity: 0.95 });
+    this._appendHandDrawnPath(g, d2, { color, lineWidth: Math.max(2, lineWidth - 1), opacity: 0.55 });
 
     if (label) {
       const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
