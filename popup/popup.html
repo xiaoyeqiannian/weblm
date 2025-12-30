@@ -9,30 +9,8 @@
 <body>
   <div class="popup-container">
 
-    <!-- 标签导航 -->
-    <nav class="tab-nav">
-      <button class="tab-btn active" data-tab="main">主页</button>
-      <button class="tab-btn" data-tab="settings">设置</button>
-      <button class="tab-btn" data-tab="about">关于</button>
-    </nav>
-
-    <!-- 主页内容 -->
-    <div class="tab-content active" id="tab-main">
-      <div class="status-section">
-        <h3>当前状态</h3>
-        <div class="status-item">
-          <span class="status-label">模型:</span>
-          <span class="status-value" id="current-model">未配置</span>
-        </div>
-        <div class="status-item">
-          <span class="status-label">语音:</span>
-          <span class="status-value" id="voice-status">可用</span>
-        </div>
-      </div>
-    </div>
-
     <!-- 设置内容 -->
-    <div class="tab-content" id="tab-settings">
+    <div class="tab-content active" id="tab-settings">
       <div class="settings-section">
         <h3>模型配置</h3>
         
@@ -101,36 +79,6 @@
             <input type="checkbox" id="auto-speak" checked>
             自动播报AI回复
           </label>
-        </div>
-      </div>
-    </div>
-
-    <!-- 关于内容 -->
-    <div class="tab-content" id="tab-about">
-      <div class="about-section">
-        <div class="about-logo">🤖</div>
-        <h2>WebLM</h2>
-        <p class="version">版本 1.0.0</p>
-        
-        <div class="about-description">
-          <p>一个AI驱动的浏览器插件，帮助你理解网页内容。</p>
-          <h4>主要功能：</h4>
-          <ul>
-            <li>🔍 智能分析和讲解页面内容</li>
-            <li>✏️ 画线标注重要元素</li>
-            <li>📜 自动翻页浏览</li>
-            <li>🎤 语音对话交互</li>
-            <li>🤖 支持多种AI模型</li>
-          </ul>
-        </div>
-
-        <div class="about-links">
-          <a href="https://github.com" target="_blank" class="link-btn">
-            📚 使用文档
-          </a>
-          <a href="https://github.com" target="_blank" class="link-btn">
-            ⭐ GitHub
-          </a>
         </div>
       </div>
     </div>

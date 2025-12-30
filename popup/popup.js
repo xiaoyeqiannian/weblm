@@ -120,20 +120,6 @@ function playVoicePreviewSync(voiceName) {
 document.addEventListener('DOMContentLoaded', async () => {
   // 缓存 DOM 元素
   elements = {
-    // 标签页
-    tabBtns: document.querySelectorAll('.tab-btn'),
-    tabContents: document.querySelectorAll('.tab-content'),
-    
-    // 操作按钮
-    btnExplain: document.getElementById('btn-explain'),
-    btnVoice: document.getElementById('btn-voice'),
-    btnAutoScroll: document.getElementById('btn-auto-scroll'),
-    btnAnnotate: document.getElementById('btn-annotate'),
-    
-    // 状态显示
-    currentModel: document.getElementById('current-model'),
-    voiceStatus: document.getElementById('voice-status'),
-    
     // 设置表单
     modelType: document.getElementById('model-type'),
     apiKey: document.getElementById('api-key'),
@@ -163,22 +149,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   // 加载语音列表
   await loadVoices();
-  
-  // 检查 URL hash
-  if (window.location.hash === '#settings') {
-    switchTab('settings');
-  }
 });
 
 // 绑定事件
 function bindEvents() {
-  // 标签页切换
-  elements.tabBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
-      switchTab(btn.dataset.tab);
-    });
-  });
-
   // 模型类型变化
   if (elements.modelType) elements.modelType.addEventListener('change', handleModelTypeChange);
 
@@ -211,17 +185,6 @@ function bindEvents() {
       playVoicePreviewSync(voiceName);
     });
   }
-}
-
-// 切换标签页
-function switchTab(tabId) {
-  elements.tabBtns.forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.tab === tabId);
-  });
-  
-  elements.tabContents.forEach(content => {
-    content.classList.toggle('active', content.id === `tab-${tabId}`);
-  });
 }
 
 // 处理模型类型变化
@@ -287,9 +250,6 @@ async function loadConfig() {
           elements.modelName.value = config.model;
         }
       }
-      
-      // 更新状态显示
-      updateStatusDisplay(modelType, config);
     }
     
     // 加载语音/截图设置
@@ -350,7 +310,6 @@ async function saveConfig() {
     
     if (response && response.success) {
       showSaveStatus('✅ 配置已保存');
-      updateStatusDisplay(modelType, config);
       
       // 保存语音/截图设置
       await chrome.storage.local.set({
@@ -378,26 +337,12 @@ function showSaveStatus(message, isError = false) {
   }, 3000);
 }
 
-// 更新状态显示
-function updateStatusDisplay(modelType, config) {
-  if (modelType && MODEL_CONFIGS[modelType]) {
-    elements.currentModel.textContent = MODEL_CONFIGS[modelType].name;
-  } else if (modelType === 'custom' && config?.model) {
-    elements.currentModel.textContent = config.model;
-  } else {
-    elements.currentModel.textContent = config?.apiKey ? '已配置' : '未配置';
-  }
-}
-
 // 加载语音列表
 async function loadVoices() {
   // 检查语音合成是否可用
-  if (!window.speechSynthesis) {
-    elements.voiceStatus.textContent = '不可用';
+  if (!window.speechSynthesis || !elements.voiceSelect) {
     return;
   }
-  
-  elements.voiceStatus.textContent = '可用';
   
   // 获取语音列表
   const loadVoiceList = () => {
